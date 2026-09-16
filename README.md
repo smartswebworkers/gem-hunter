@@ -2,7 +2,6 @@
 
 A multichain memecoin scanner (Solana, BSC, Base, Robinhood Chain) that uses **Nansen's Smart Money data** as a core trust signal, not a cosmetic add-on, to separate real early opportunities from the hundreds of rugs launched every hour.
 
-Built for the [Nansen Meridian Buildathon](https://nsn.ai/meridian-build).
 
 ## Why Smart Money, not just on-chain heuristics
 
