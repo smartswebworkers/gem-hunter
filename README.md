@@ -43,7 +43,7 @@ Required in `.env`:
 |---|---|
 | `NANSEN_API_KEY` | Smart Money signal + Token Screener discovery (this submission's core dependency) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Alerting |
-| `RPC_SOLANA` | On-chain security reads — the public endpoint works but is heavily rate-limited; a free Helius/QuickNode key is recommended |
+| `RPC_SOLANA` | On-chain security reads, the public endpoint works but is heavily rate-limited; a free Helius/QuickNode key is recommended |
 | `GOPLUS_APP_KEY` / `GOPLUS_APP_SECRET`, `BIRDEYE_API_KEY` | Optional, improve security-check reliability |
 
 No key is required to run the app, but without `NANSEN_API_KEY` the Smart Money signal, this project's actual submission, is inert.
