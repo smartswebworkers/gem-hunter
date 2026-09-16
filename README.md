@@ -16,7 +16,7 @@ Two endpoints, both wired into the actual decision pipeline (not just displayed)
 
 | Endpoint | Used for | File |
 |---|---|---|
-| `POST /token-screener` | Multi-chain token discovery — the "quality" scan profile's primary source of new candidates, across Solana, BSC, Ethereum, Base **and Robinhood Chain** | [`data_sources/nansen.py`](data_sources/nansen.py) |
+| `POST /token-screener` | Multi-chain token discovery, the "quality" scan profile's primary source of new candidates, across Solana, BSC, Ethereum, Base **and Robinhood Chain** | [`data_sources/nansen.py`](data_sources/nansen.py) |
 | `POST /tgm/holders` (Token God Mode) | Smart Money holder detection, filtered to `Smart Trader`, `30D/90D Smart Trader`, `Fund` labels | [`data_sources/nansen.py`](data_sources/nansen.py) |
 
 What that Smart Money signal actually drives:
