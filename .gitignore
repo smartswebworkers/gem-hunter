@@ -1,0 +1,24 @@
+# Secrets — ne jamais committer (tokens Telegram/Nansen, clé RPC privée...)
+.env
+.env.*
+!.env.example
+
+# Base de données locale (historique de scan, signaux) — données générées,
+# pas du code, et pas destinée à être publique.
+storage/*.db
+storage/*.sqlite
+storage/*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

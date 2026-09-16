@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>GEMHUNTER // TERMINAL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg: #05080d;
+  --panel: #0c131c;
+  --panel-border: #1b2836;
+  --cyan: #2dd4bf;
+  --blue: #38bdf8;
+  --text: #dce7ee;
+  --muted: #5b6b7a;
+  --danger: #f4536b;
+  --warn: #f5b942;
+  --success: #34d399;
+  --radius: 10px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+body{
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:#1b2836; border-radius:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* --- Ligne de scan ambiante (signature visuelle) --- */
+.scanline{
+  position: fixed; top:0; left:0; right:0; height:2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.5;
+  animation: sweep 6s linear infinite;
+  z-index: 50; pointer-events:none;
+  will-change: transform;
+}
+@keyframes sweep{
+  0%{ transform: translateY(0); opacity:0; }
+  5%{ opacity:0.6; }
+  50%{ transform: translateY(100vh); opacity:0.6; }
+  55%{ opacity:0; }
+  100%{ transform: translateY(100vh); opacity:0; }
+}
+
+header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 18px 28px; border-bottom: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, rgba(45,212,191,0.04), transparent);
+}
+.brand{ display:flex; align-items:center; gap:14px; }
+.orb{
+  width:40px; height:40px; border-radius:50%;
+  background: radial-gradient(circle at 35% 30%, var(--cyan), #0a3a38 70%);
+  box-shadow: 0 0 18px rgba(45,212,191,0.45);
+  position:relative;
+}
+.orb::after{
+  content:''; position:absolute; inset:-6px; border-radius:50%;
+  border:1px solid rgba(45,212,191,0.35);
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+@keyframes pulse-ring{
+  0%{ transform:scale(0.8); opacity:0.8; }
+  100%{ transform:scale(1.6); opacity:0; }
+}
+.brand-text .title{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:19px; letter-spacing:0.5px; }
+.brand-text .title span{ color: var(--cyan); }
+.brand-text .subtitle{ font-size:11px; color:var(--muted); letter-spacing:1.5px; margin-top:2px; display:flex; align-items:center; gap:6px;}
+.dot{ width:6px; height:6px; border-radius:50%; background:var(--cyan); box-shadow:0 0 6px var(--cyan); animation: blink 1.6s ease-in-out infinite;}
+.dot.warn{ background:var(--warn); box-shadow:0 0 6px var(--warn); animation-delay:0.4s;}
+@keyframes blink{ 0%,100%{opacity:1;} 50%{opacity:0.25;} }
+
+.stats{ display:flex; gap:34px; }
+.stat{ text-align:right; }
+.stat .label{ font-size:10px; letter-spacing:1.2px; color:var(--muted); margin-bottom:4px; }
+.stat .value{ font-family:'IBM Plex Mono', monospace; font-size:20px; font-weight:600; }
+.stat .value.accent{ color: var(--cyan); }
+
+main{ display:grid; grid-template-columns: 1fr 320px; gap:20px; padding:22px 28px; }
+
+.panel{
+  background: var(--panel); border:1px solid var(--panel-border); border-radius: var(--radius);
+  padding:18px 20px;
+}
+.panel-title{
+  font-size:12px; letter-spacing:1.4px; color:var(--text); font-weight:600;
+  display:flex; align-items:center; gap:8px; margin-bottom:16px;
+}
+.panel-title::before{ content:''; width:3px; height:14px; background:var(--cyan); border-radius:2px; box-shadow:0 0 6px var(--cyan);}
+
+.filter-row{ display:flex; align-items:center; gap:22px; margin-bottom:18px; flex-wrap:wrap; }
+.filter-row label{ font-size:11px; color:var(--muted); letter-spacing:1px; margin-right:10px;}
+select, .cmd-btn{
+  background:#0f1822; border:1px solid var(--panel-border); color:var(--text);
+  border-radius:6px; padding:7px 12px; font-family:'Inter',sans-serif; font-size:13px;
+  cursor:pointer; transition: all 0.15s ease;
+}
+select:hover, .cmd-btn:hover{ border-color: var(--cyan); }
+.cmd-btn.active{ background: rgba(45,212,191,0.12); border-color:var(--cyan); color:var(--cyan); }
+.cmd-btn.danger{ border-color: rgba(244,83,107,0.5); color:var(--danger); }
+.cmd-btn.danger:hover{ background: rgba(244,83,107,0.12); }
+
+.slider-wrap{ display:flex; align-items:center; gap:10px; }
+input[type=range]{
+  -webkit-appearance:none; width:180px; height:4px; border-radius:2px;
+  background: linear-gradient(90deg, var(--cyan) var(--fill,50%), #1b2836 var(--fill,50%));
+  outline:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+  background: var(--cyan); box-shadow:0 0 8px var(--cyan); cursor:pointer;
+}
+.slider-value{ font-family:'IBM Plex Mono',monospace; color:var(--cyan); font-size:13px; min-width:38px;}
+
+.cmd-bar{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+
+.cards-grid{
+  display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap:14px; max-height: 62vh; overflow-y:auto; padding-right:4px;
+}
+.card{
+  background:#0f1822; border:1px solid var(--panel-border); border-left:3px solid var(--muted);
+  border-radius:8px; padding:14px 16px; position:relative;
+  animation: card-in 0.4s ease;
+}
+.card.risk-low{ border-left-color: var(--success); }
+.card.risk-mid{ border-left-color: var(--warn); }
+.card.risk-high{ border-left-color: var(--danger); }
+@keyframes card-in{ from{ opacity:0; transform: translateY(6px); } to{ opacity:1; transform:none; } }
+
+.card-top{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;}
+.card-chain{ font-size:10px; letter-spacing:1px; color:var(--muted); background:#0a121a; border:1px solid var(--panel-border); border-radius:4px; padding:2px 6px;}
+.card-age{ font-size:10px; color:var(--muted); }
+.card-ticker{ font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:16px; margin:4px 0 2px;}
+.card-score{ font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:600; color:var(--cyan); }
+/* Niveau VEILLE : détection précoce NON vérifiée. Volontairement distincte au
+   premier coup d'oeil d'un signal validé — c'est tout l'intérêt d'avoir deux
+   niveaux plutôt qu'un. */
+.card.tier-watch{ border-color:#8a6d1f; background:linear-gradient(180deg,rgba(138,109,31,.10),transparent); }
+.card.tier-watch .card-score{ color:#e0b341; }
+.card.tier-watch .card-bar-fill{ background:#e0b341; }
+.tier-badge{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:9px; font-weight:700;
+  letter-spacing:.09em; padding:2px 6px; border-radius:3px; margin-left:6px; vertical-align:middle; }
+.tier-badge.watch{ background:#e0b341; color:#1a1405; }
+.tier-badge.signal{ background:#1fbf75; color:#04160d; }
+.watch-notice{ margin-top:10px; padding:8px 10px; border-radius:5px; font-size:11px; line-height:1.5;
+  background:rgba(224,179,65,.10); border:1px solid rgba(224,179,65,.35); color:#e0b341; }
+.card-bar{ height:4px; border-radius:2px; background:#1b2836; margin:8px 0 10px; overflow:hidden;}
+.card-bar-fill{ height:100%; background: linear-gradient(90deg, var(--cyan), var(--blue)); transition: width 0.5s ease;}
+.card-bottom{ display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--muted);}
+.card-price{ font-family:'IBM Plex Mono',monospace; color:var(--text); }
+.liq-check{ color: var(--cyan); cursor:pointer; text-decoration:underline dotted; }
+.card-delete{
+  position:absolute; top:8px; right:10px; background:none; border:none; color:var(--muted);
+  font-size:14px; cursor:pointer; transition: color 0.15s;
+}
+.card-delete:hover{ color: var(--danger); }
+.card-reasons{ font-size:10.5px; color:var(--muted); margin-top:8px; line-height:1.5; }
+
+.empty-state{ grid-column:1/-1; text-align:center; color:var(--muted); padding:60px 20px; font-size:13px; }
+
+/* --- Panneau latéral --- */
+.side-col{ display:flex; flex-direction:column; gap:20px; }
+.gauges{ display:flex; justify-content:space-between; }
+.gauge{ text-align:center; }
+.gauge svg{ transform: rotate(-90deg); }
+.gauge-track{ fill:none; stroke:#1b2836; stroke-width:8; }
+.gauge-fill{ fill:none; stroke:var(--danger); stroke-width:8; stroke-linecap:round; transition: stroke-dashoffset 1s ease; }
+.gauge-value{ font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; margin-top:-52px; margin-bottom:30px;}
+.gauge-label{ font-size:10px; color:var(--muted); letter-spacing:0.5px; }
+
+.weights-list{ display:flex; flex-direction:column; gap:10px; }
+.weight-row{ display:flex; align-items:center; gap:10px; font-size:11px; }
+.weight-name{ width:110px; color:var(--muted); flex-shrink:0; }
+.weight-track{ flex:1; height:6px; background:#1b2836; border-radius:3px; overflow:hidden;}
+.weight-fill{ height:100%; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+.weight-val{ font-family:'IBM Plex Mono',monospace; width:28px; text-align:right; color:var(--text);}
+.panel-note{ font-size:10.5px; color:var(--muted); margin-top:12px; line-height:1.5; font-style:italic;}
+
+.log-panel{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--success);
+  max-height:180px; overflow-y:auto; display:flex; flex-direction:column-reverse; gap:3px;}
+.log-line{ opacity:0.85; }
+.log-line.warn{ color: var(--warn); }
+.log-line.error{ color: var(--danger); }
+
+.card{ cursor:pointer; }
+
+/* --- Modal de prévisualisation --- */
+.modal-backdrop{
+  position:fixed; inset:0; background:rgba(3,5,9,0.88);
+  display:flex; align-items:center; justify-content:center; z-index:100;
+  opacity:0; pointer-events:none; transition: opacity 0.15s ease;
+}
+.modal-backdrop.open{ opacity:1; pointer-events:auto; }
+.modal{
+  background: var(--panel); border:1px solid var(--panel-border); border-radius:14px;
+  width:480px; max-width:92vw; max-height:86vh; overflow-y:auto;
+  padding:26px 28px; box-shadow: 0 0 40px rgba(45,212,191,0.12);
+  transform: translateY(10px); transition: transform 0.2s ease;
+}
+.modal-backdrop.open .modal{ transform: translateY(0); }
+.modal-header{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;}
+.modal-ticker{ font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:22px; }
+.modal-name{ color:var(--muted); font-size:13px; margin-bottom:14px;}
+.modal-close{ background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; }
+.modal-close:hover{ color:var(--text); }
+.modal-score{ font-family:'IBM Plex Mono',monospace; font-size:38px; font-weight:700; color:var(--cyan); margin:6px 0 16px;}
+
+.modal-address{
+  display:flex; align-items:center; gap:8px; background:#0a121a; border:1px solid var(--panel-border);
+  border-radius:6px; padding:9px 12px; font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+  color:var(--text); margin-bottom:18px; word-break:break-all;
+}
+.modal-address button{
+  background:none; border:1px solid var(--panel-border); border-radius:4px; color:var(--cyan);
+  font-size:10px; padding:3px 8px; cursor:pointer; flex-shrink:0; white-space:nowrap;
+}
+.modal-address button:hover{ background: rgba(45,212,191,0.12); }
+
+.modal-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px; }
+.modal-stat{ background:#0a121a; border:1px solid var(--panel-border); border-radius:8px; padding:10px 12px;}
+.modal-stat .l{ font-size:10px; color:var(--muted); letter-spacing:0.6px; margin-bottom:4px;}
+.modal-stat .v{ font-family:'IBM Plex Mono',monospace; font-size:14.5px; }
+.modal-stat .v.green{ color:var(--success); }
+.modal-stat .v.red{ color:var(--danger); }
+
+.modal-section-title{ font-size:11px; letter-spacing:1px; color:var(--muted); margin:16px 0 8px;}
+.modal-reasons{ font-size:12px; color:var(--text); line-height:1.7; }
+.modal-reasons div::before{ content:'• '; color:var(--cyan); }
+
+.modal-links{ display:flex; gap:10px; margin-top:20px; flex-wrap:wrap; }
+.modal-link{
+  flex:1; min-width:110px; text-align:center; padding:11px; border-radius:8px;
+  background: linear-gradient(135deg, rgba(45,212,191,0.15), rgba(56,189,248,0.1));
+  border:1px solid var(--cyan); color:var(--cyan); font-weight:600; font-size:13px;
+  cursor:pointer; transition: all 0.15s ease; text-decoration:none;
+}
+.modal-link:hover{ background: rgba(45,212,191,0.25); }
+.modal-link.secondary{ background:#0a121a; border-color:var(--panel-border); color:var(--text); }
+.modal-link.secondary:hover{ border-color:var(--cyan); color:var(--cyan); }
+</style>
+</head>
+<body>
+
+<div class="scanline"></div>
+
+<header>
+  <div class="brand">
+    <div class="orb"></div>
+    <div class="brand-text">
+      <div class="title">GEM<span>HUNTER</span> // TERMINAL</div>
+      <div class="subtitle"><span class="dot" id="statusDot"></span><span data-i18n="brand.subtitle">SCAN MULTI-CHAIN EN DIRECT — PRIORITÉ SOLANA</span></div>
+    </div>
+  </div>
+  <div class="header-right" style="display:flex; align-items:center; gap:26px;">
+    <div class="stats">
+      <div class="stat"><div class="label" data-i18n="stat.signals">SIGNAUX</div><div class="value" id="statSignaux">0</div></div>
+      <div class="stat"><div class="label" data-i18n="stat.winrate">WIN RATE 24H</div><div class="value" id="statWinRate">—</div></div>
+      <div class="stat"><div class="label" data-i18n="stat.avgreturn">RETOUR MOY. 24H</div><div class="value" id="statAvgReturn">—</div></div>
+      <div class="stat"><div class="label" data-i18n="stat.threshold">SEUIL ACTIF</div><div class="value accent" id="statSeuil">0.90</div></div>
+    </div>
+    <select id="selLang" title="Language / Langue / 语言">
+      <option value="fr">FR</option>
+      <option value="en">EN</option>
+      <option value="zh">中文</option>
+    </select>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="cmd-bar">
+      <button class="cmd-btn" id="btnRun">▶ <span data-i18n="btn.run">RUN</span></button>
+      <button class="cmd-btn" id="btnPause">⏸ <span data-i18n="btn.pause">PAUSE</span></button>
+      <button class="cmd-btn danger" id="btnStop">⏹ <span data-i18n="btn.stop">STOP</span></button>
+      <button class="cmd-btn" id="btnAutoBuy">AUTO BUY: OFF</button>
+      <button class="cmd-btn active" id="btnTelegram">TELEGRAM: ON</button>
+      <button class="cmd-btn active" id="btnNansen">SMART MONEY: ON</button>
+      <button class="cmd-btn active" id="btnWatch">VEILLE: ON</button>
+      <button class="cmd-btn" id="btnProfile" title="">PROFIL: DEGEN</button>
+      <select id="selMode">
+        <option value="safe" data-i18n="mode.safe">MODE: SAFE</option>
+        <option value="aggressive" data-i18n="mode.aggressive">MODE: AGGRESSIVE</option>
+      </select>
+    </div>
+
+    <div class="panel-title" data-i18n="panel.signals">SIGNAUX DÉTECTÉS</div>
+    <div class="filter-row">
+      <div><label data-i18n="filter.chain">CHAÎNE</label>
+        <div id="chainToggles" style="display:inline-flex;gap:6px;flex-wrap:wrap;vertical-align:middle">
+          <button type="button" class="cmd-btn chain-chip active" data-chain="solana">SOLANA</button>
+          <button type="button" class="cmd-btn chain-chip active" data-chain="bsc">BSC</button>
+          <button type="button" class="cmd-btn chain-chip active" data-chain="base">BASE</button>
+          <button type="button" class="cmd-btn chain-chip active" data-chain="robinhood">ROBINHOOD</button>
+        </div>
+      </div>
+      <div class="slider-wrap">
+        <label data-i18n="filter.scoremin">SCORE MIN</label>
+        <input type="range" id="scoreSlider" min="30" max="100" value="80" autocomplete="off">
+        <span class="slider-value" id="scoreSliderValue">0.80</span>
+      </div>
+      <button class="cmd-btn danger" id="btnClearAll" style="margin-left:auto;">🗑 <span data-i18n="btn.clearall">Effacer tout</span></button>
+    </div>
+
+    <div class="cards-grid" id="cardsGrid">
+      <div class="empty-state" id="emptyState" data-i18n="empty.nosignal">Aucun signal pour l'instant — en attente du scan.</div>
+    </div>
+  </section>
+
+  <aside class="side-col">
+    <div class="panel">
+      <div class="panel-title" data-i18n="panel.reliability">FIABILITÉ PAR HORIZON</div>
+      <div class="gauges">
+        <div class="gauge" data-horizon="1h">
+          <svg width="76" height="76" viewBox="0 0 76 76">
+            <circle class="gauge-track" cx="38" cy="38" r="30"></circle>
+            <circle class="gauge-fill" cx="38" cy="38" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle>
+          </svg>
+          <div class="gauge-value">—</div>
+          <div class="gauge-label">1H</div>
+        </div>
+        <div class="gauge" data-horizon="6h">
+          <svg width="76" height="76" viewBox="0 0 76 76">
+            <circle class="gauge-track" cx="38" cy="38" r="30"></circle>
+            <circle class="gauge-fill" cx="38" cy="38" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle>
+          </svg>
+          <div class="gauge-value">—</div>
+          <div class="gauge-label">6H</div>
+        </div>
+        <div class="gauge" data-horizon="24h">
+          <svg width="76" height="76" viewBox="0 0 76 76">
+            <circle class="gauge-track" cx="38" cy="38" r="30"></circle>
+            <circle class="gauge-fill" cx="38" cy="38" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle>
+          </svg>
+          <div class="gauge-value">—</div>
+          <div class="gauge-label">24H</div>
+        </div>
+      </div>
+      <div class="panel-note" data-i18n="note.gauge">Calculé à partir du prix réel constaté après chaque signal (DexScreener). "—" = pas encore assez de données à cet horizon.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title" data-i18n="panel.weights">POIDS DU SCORING</div>
+      <div class="weights-list" id="weightsList"></div>
+      <div class="panel-note" data-i18n="note.weights">Poids actuels de config.py. L'auto-correction (ajustement selon les résultats réels) est appliquée toutes les 20 analyses.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title" data-i18n="panel.log">JOURNAL</div>
+      <div class="log-panel" id="logPanel"></div>
+    </div>
+  </aside>
+</main>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+let bridge = null;
+const cards = new Map();
+const signalData = new Map();
+// Chaînes dont l'utilisateur veut les alertes (1 ou plusieurs). Pilote à la
+// fois l'affichage des cartes ET ce que le scanner scanne réellement
+// (bridge.toggleChain -> scanner.toggle_chain -> state.active_chains). Une
+// chaîne décochée n'est plus scannée du tout : ni carte, ni alerte Telegram.
+let alertChains = new Set(["solana", "bsc", "base", "robinhood"]);
+let minScore = 80;
+
+// =============================================================================
+// i18n — dashboard trilingue (FR / EN / 中文)
+// =============================================================================
+// La langue choisie ici ne pilote QUE l'affichage du dashboard. Les alertes
+// Telegram restent réglées séparément par config.ALERT_LANGUAGES (FR/EN) côté
+// backend — les deux réglages ne se marchent pas dessus. Les raisons/
+// vérifications manquantes affichées dans les cartes, elles, SONT traduites
+// côté backend (gui/bridge.py::_localize_signal) selon la langue choisie ici :
+// changer de langue redemande donc les signaux existants pour les ré-afficher
+// traduits (voir setLanguage()).
+let currentLang = "fr";
+const LOCALE_MAP = { fr: "fr-FR", en: "en-US", zh: "zh-CN" };
+
+const I18N = {
+  "brand.subtitle": { fr: "SCAN MULTI-CHAIN EN DIRECT — PRIORITÉ SOLANA", en: "LIVE MULTI-CHAIN SCAN — SOLANA PRIORITY", zh: "多链实时扫描 — 优先 Solana" },
+  "stat.signals": { fr: "SIGNAUX", en: "SIGNALS", zh: "信号数" },
+  "stat.winrate": { fr: "WIN RATE 24H", en: "WIN RATE 24H", zh: "24小时胜率" },
+  "stat.avgreturn": { fr: "RETOUR MOY. 24H", en: "AVG RETURN 24H", zh: "24小时平均回报" },
+  "stat.threshold": { fr: "SEUIL ACTIF", en: "ACTIVE THRESHOLD", zh: "当前阈值" },
+  "btn.run": { fr: "RUN", en: "RUN", zh: "启动" },
+  "btn.pause": { fr: "PAUSE", en: "PAUSE", zh: "暂停" },
+  "btn.stop": { fr: "STOP", en: "STOP", zh: "停止" },
+  "btn.autobuy": { fr: "AUTO BUY", en: "AUTO BUY", zh: "自动买入" },
+  "btn.telegram": { fr: "TELEGRAM", en: "TELEGRAM", zh: "TELEGRAM" },
+  "btn.multichain": { fr: "MULTICHAIN", en: "MULTICHAIN", zh: "多链" },
+  "btn.smartmoney": { fr: "SMART MONEY", en: "SMART MONEY", zh: "聪明钱" },
+  "btn.watch": { fr: "VEILLE", en: "WATCH", zh: "观察" },
+  "btn.profile": { fr: "PROFIL", en: "PROFILE", zh: "模式" },
+  "profile.quality": { fr: "QUALITY", en: "QUALITY", zh: "QUALITY" },
+  "profile.degen": { fr: "DEGEN", en: "DEGEN", zh: "DEGEN" },
+  "profile.tooltip": {
+    fr: "QUALITY : pas de flux pump.fun, planchers hauts, uniquement du SIGNAL vérifié. DEGEN : firehose pump.fun + VEILLE précoce.",
+    en: "QUALITY: no pump.fun firehose, high floors, only verified SIGNAL. DEGEN: pump.fun firehose + early WATCH.",
+    zh: "QUALITY：不使用 pump.fun 实时流，门槛更高，仅显示已验证的 SIGNAL。DEGEN：启用 pump.fun 实时流 + 早期 WATCH。",
+  },
+  "mode.safe": { fr: "MODE: SAFE", en: "MODE: SAFE", zh: "模式：SAFE" },
+  "mode.aggressive": { fr: "MODE: AGGRESSIVE", en: "MODE: AGGRESSIVE", zh: "模式：AGGRESSIVE" },
+  "panel.signals": { fr: "SIGNAUX DÉTECTÉS", en: "DETECTED SIGNALS", zh: "已检测信号" },
+  "filter.chain": { fr: "CHAÎNE", en: "CHAIN", zh: "链" },
+  "filter.scoremin": { fr: "SCORE MIN", en: "MIN SCORE", zh: "最低分数" },
+  "chain.all": { fr: "Toutes", en: "All", zh: "全部" },
+  "btn.clearall": { fr: "Effacer tout", en: "Clear all", zh: "清空全部" },
+  "empty.nosignal": { fr: "Aucun signal pour l'instant — en attente du scan.", en: "No signal yet — waiting for the scan.", zh: "暂无信号 — 等待扫描中。" },
+  "panel.reliability": { fr: "FIABILITÉ PAR HORIZON", en: "RELIABILITY BY HORIZON", zh: "各周期可靠性" },
+  "note.gauge": {
+    fr: "Calculé à partir du prix réel constaté après chaque signal (DexScreener). \"—\" = pas encore assez de données à cet horizon.",
+    en: "Computed from the real price observed after each signal (DexScreener). \"—\" = not enough data yet at this horizon.",
+    zh: "根据每次信号后 DexScreener 实际观察到的价格计算。“—”表示该周期数据尚不足。",
+  },
+  "panel.weights": { fr: "POIDS DU SCORING", en: "SCORING WEIGHTS", zh: "评分权重" },
+  "note.weights": {
+    fr: "Poids actuels de config.py. L'auto-correction (ajustement selon les résultats réels) est appliquée toutes les 20 analyses.",
+    en: "Current weights from config.py. Auto-correction (adjustment from real results) runs every 20 scan cycles.",
+    zh: "当前权重来自 config.py。自动校正（根据实际结果调整）每 20 个扫描周期执行一次。",
+  },
+  "panel.log": { fr: "JOURNAL", en: "LOG", zh: "日志" },
+  "state.on": { fr: "ON", en: "ON", zh: "开" },
+  "state.off": { fr: "OFF", en: "OFF", zh: "关" },
+  "badge.watch": { fr: "VEILLE", en: "WATCH", zh: "观察" },
+  "badge.verified": { fr: "VÉRIFIÉ", en: "VERIFIED", zh: "已验证" },
+  "card.unverified": { fr: "non vérifié", en: "unverified", zh: "未验证" },
+  "card.delete": { fr: "Supprimer", en: "Delete", zh: "删除" },
+  "card.details": { fr: "détails →", en: "details →", zh: "详情 →" },
+  "time.justNow": { fr: "à l'instant", en: "just now", zh: "刚刚" },
+  "time.minShort": { fr: " min", en: " min", zh: "分钟" },
+  "time.hourShort": { fr: "h", en: "h", zh: "小时" },
+  "time.dayShort": { fr: " j", en: "d", zh: "天" },
+  "modal.detected": { fr: "Détecté", en: "Detected", zh: "检测时间" },
+  "modal.risk": { fr: "risque", en: "risk", zh: "风险" },
+  "modal.watchTitle": { fr: "DÉTECTION PRÉCOCE — NON VÉRIFIÉE.", en: "EARLY DETECTION — UNVERIFIED.", zh: "早期检测 — 尚未验证。" },
+  "modal.watchBody1": {
+    fr: "Ce n'est pas un signal d'achat. Les vérifications de sécurité suivantes n'ont pas encore pu être effectuées :",
+    en: "This is not a buy signal. The following security checks could not be performed yet:",
+    zh: "这不是买入信号。以下安全检查尚未完成：",
+  },
+  "modal.watchFallback": { fr: "vérifications incomplètes", en: "incomplete checks", zh: "检查尚未完成" },
+  "modal.watchBody2": {
+    fr: "Aucun plan d'entrée n'est proposé tant que ces points ne sont pas levés. Le bot continue de surveiller ce token et le promeut en signal validé dès qu'il passe toutes les vérifications.",
+    en: "No entry plan is provided until these points are resolved. The bot keeps monitoring this token and promotes it to a validated signal as soon as it passes every check.",
+    zh: "在这些问题解决之前，不会给出入场计划。机器人会持续监控该代币，一旦通过全部检查即升级为已验证信号。",
+  },
+  "modal.copy": { fr: "COPIER", en: "COPY", zh: "复制" },
+  "modal.copied": { fr: "COPIÉ ✓", en: "COPIED ✓", zh: "已复制 ✓" },
+  "modal.marketcap": { fr: "MARKET CAP", en: "MARKET CAP", zh: "市值" },
+  "modal.liquidity": { fr: "LIQUIDITÉ", en: "LIQUIDITY", zh: "流动性" },
+  "modal.entryprice": { fr: "PRIX D'ENTRÉE", en: "ENTRY PRICE", zh: "入场价格" },
+  "modal.stoploss": { fr: "STOP LOSS", en: "STOP LOSS", zh: "止损" },
+  "modal.tp": { fr: "TP1 / TP2 / TP3", en: "TP1 / TP2 / TP3", zh: "目标价1/2/3" },
+  "modal.positionsize": { fr: "TAILLE POSITION", en: "POSITION SIZE", zh: "仓位大小" },
+  "modal.notcalculated": { fr: "non calculé", en: "not calculated", zh: "未计算" },
+  "modal.notcalculatedPlural": { fr: "non calculés", en: "not calculated", zh: "未计算" },
+  "modal.none": { fr: "aucune", en: "none", zh: "无" },
+  "modal.observations": { fr: "OBSERVATIONS", en: "OBSERVATIONS", zh: "观察结果" },
+  "modal.signalreasons": { fr: "RAISONS DU SIGNAL", en: "SIGNAL REASONS", zh: "信号原因" },
+  "modal.noreasons": { fr: "Aucune raison détaillée.", en: "No detailed reason.", zh: "暂无详细原因。" },
+  "modal.recapTitle": { fr: "RÉCAP (pour les réseaux)", en: "RECAP (for socials)", zh: "复盘（用于社交媒体）" },
+  "modal.recapHint": {
+    fr: "Résumé rédigé dans la langue sélectionnée, prêt à coller.",
+    en: "Written summary in the selected language, ready to paste.",
+    zh: "以所选语言撰写的摘要，可直接粘贴。",
+  },
+  "modal.recapCopy": { fr: "COPIER LE RÉCAP", en: "COPY RECAP", zh: "复制复盘" },
+  "modal.recapLoading": { fr: "Génération…", en: "Generating…", zh: "生成中…" },
+  "modal.recapEmpty": { fr: "Récap indisponible pour ce token.", en: "Recap unavailable for this token.", zh: "该代币暂无复盘。" },
+  "link.axiom": { fr: "Trader sur Axiom", en: "Trade on Axiom", zh: "在 Axiom 交易" },
+  "link.solscan": { fr: "Solscan", en: "Solscan", zh: "Solscan" },
+  "link.dexscreener": { fr: "DexScreener", en: "DexScreener", zh: "DexScreener" },
+  "link.bscscan": { fr: "BscScan", en: "BscScan", zh: "BscScan" },
+  "link.etherscan": { fr: "Etherscan", en: "Etherscan", zh: "Etherscan" },
+};
+
+// Le niveau de risque (sig.risk_level) est produit par le backend en
+// français quelle que soit la langue du dashboard (voir gui/bridge.py) : ce
+// n'est pas un texte libre traduit via i18n.translate, juste une des 4
+// valeurs fixes ci-dessous, donc une table de correspondance suffit ici.
+const RISK_I18N = {
+  "Faible": { fr: "Faible", en: "Low", zh: "低" },
+  "Modéré": { fr: "Modéré", en: "Moderate", zh: "中等" },
+  "Élevé": { fr: "Élevé", en: "High", zh: "高" },
+  "Non vérifié": { fr: "Non vérifié", en: "Unverified", zh: "未验证" },
+};
+
+// Noms des critères du scoring (config.SCORE_WEIGHTS) : ce sont des
+// identifiants Python, pas du texte à traduire via le catalogue backend.
+const WEIGHT_I18N = {
+  safety: { fr: "Sécurité", en: "Safety", zh: "安全性" },
+  holder_distribution: { fr: "Répartition détenteurs", en: "Holder distribution", zh: "持有人分布" },
+  liquidity_score: { fr: "Liquidité (absolue)", en: "Liquidity (absolute)", zh: "流动性（绝对值）" },
+  liquidity_quality: { fr: "Liquidité / capitalisation", en: "Liquidity / market cap", zh: "流动性/市值比" },
+  smart_money: { fr: "Smart Money", en: "Smart Money", zh: "聪明钱" },
+  vol_liq_ratio: { fr: "Ratio volume/liquidité", en: "Volume/liquidity ratio", zh: "成交量/流动性比" },
+  momentum_1h: { fr: "Momentum 1h", en: "1h momentum", zh: "1小时动能" },
+  buy_pressure: { fr: "Pression acheteuse", en: "Buy pressure", zh: "买盘压力" },
+  momentum_5m: { fr: "Momentum 5m", en: "5m momentum", zh: "5分钟动能" },
+};
+
+function t(key){
+  const entry = I18N[key];
+  if(!entry) return key;
+  return entry[currentLang] || entry.fr || key;
+}
+
+function tRisk(level){
+  const entry = RISK_I18N[level];
+  if(!entry) return level || "?";
+  return entry[currentLang] || entry.fr || level;
+}
+
+function tWeight(name){
+  const entry = WEIGHT_I18N[name];
+  if(!entry) return name.replace(/_/g, " ");
+  return entry[currentLang] || entry.fr || name;
+}
+
+function applyI18n(){
+  document.documentElement.lang = currentLang;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.getElementById("btnProfile").title = t("profile.tooltip");
+  refreshToggleLabels();
+  if(lastWeights) loadWeights(lastWeights);
+}
+
+// Reconstruit le texte des boutons à état (ON/OFF, PROFIL) dans la langue
+// courante, sans changer leur état — appelé après un clic ET après un
+// changement de langue.
+function refreshToggleLabels(){
+  document.getElementById("btnAutoBuy").textContent = t("btn.autobuy") + ": " + (autoBuy ? t("state.on") : t("state.off"));
+  document.getElementById("btnTelegram").textContent = t("btn.telegram") + ": " + (telegramOn ? t("state.on") : t("state.off"));
+  document.getElementById("btnNansen").textContent = t("btn.smartmoney") + ": " + (nansenOn ? t("state.on") : t("state.off"));
+  document.getElementById("btnWatch").textContent = t("btn.watch") + ": " + (watchOn ? t("state.on") : t("state.off"));
+  document.getElementById("btnProfile").textContent = t("btn.profile") + ": " + (profileQuality ? t("profile.quality") : t("profile.degen"));
+}
+
+// Change la langue d'affichage : persiste le choix côté backend (pour que les
+// raisons/vérifications manquantes soient traduites au même endroit que
+// l'interface), puis recharge les signaux existants pour les ré-afficher dans
+// la nouvelle langue.
+function setLanguage(lang, persist){
+  currentLang = (lang === "en" || lang === "zh") ? lang : "fr";
+  document.getElementById("selLang").value = currentLang;
+  applyI18n();
+  if(persist === false) return;
+  if(bridge){
+    bridge.setUiLanguage(currentLang, function(){
+      document.getElementById("cardsGrid").querySelectorAll(".card").forEach(c => c.remove());
+      cards.clear();
+      signalData.clear();
+      bridge.getExistingSignals(function(jsonStr){
+        JSON.parse(jsonStr).forEach(addSignal);
+        refreshAllAges();
+      });
+    });
+  }
+}
+
+// CORRECTIF SÉCURITÉ : ticker/name/contract proviennent des métadonnées d'un
+// token on-chain — n'importe quel créateur de token peut y mettre ce qu'il
+// veut, y compris du HTML/JS. Avant ce correctif, ces valeurs étaient
+// injectées telles quelles dans innerHTML (renderCard, openModal), ce qui
+// permettait une XSS stockée : un token nommé par ex. `<img src=x
+// onerror="bridge.openExternalUrl('https://phishing...')">` exécutait du JS
+// dans le contexte du dashboard dès qu'il devenait un signal. escapeHtml()
+// neutralise ça en échappant les caractères HTML spéciaux avant insertion.
+function escapeHtml(str){
+  if(str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+let lastWeights = null;
+
+function fmtScore(s){ return (s/100).toFixed(2); }
+
+// risk_level est toujours produit en français par le backend (voir RISK_I18N
+// ci-dessus) : cette fonction classe donc sur la valeur française quelle que
+// soit la langue affichée, l'affichage lui-même passe par tRisk().
+function riskClass(level){
+  if(level === "Faible") return "risk-low";
+  if(level === "Modéré") return "risk-mid";
+  return "risk-high";
+}
+
+function renderCard(sig){
+  const el = document.createElement("div");
+  const isWatch = (sig.tier === "veille") || (sig.verified === false);
+  el.className = "card " + (isWatch ? "tier-watch" : riskClass(sig.risk_level));
+  el.dataset.chain = sig.chain;
+  el.dataset.id = sig.id;
+  el.innerHTML = `
+    <button class="card-delete" title="${escapeHtml(t("card.delete"))}">✕</button>
+    <div class="card-top">
+      <span class="card-chain">${escapeHtml((sig.chain||"?").toUpperCase())}</span>
+      <span class="card-age" data-created="${sig.created_at || (Date.now()/1000)}">${escapeHtml(t("time.justNow"))}</span>
+    </div>
+    <div class="card-ticker">${escapeHtml(sig.ticker || "?")}<span class="tier-badge ${isWatch?"watch":"signal"}">${escapeHtml(isWatch?t("badge.watch"):t("badge.verified"))}</span></div>
+    <div class="card-score">${fmtScore(sig.score)}</div>
+    <div class="card-bar"><div class="card-bar-fill" style="width:${sig.score}%"></div></div>
+    <div class="card-bottom">
+      <span class="card-price">${isWatch ? escapeHtml(t("card.unverified")) : "$"+escapeHtml(sig.entry_price ?? sig.price_usd ?? "?")}</span>
+      <span class="liq-check">${escapeHtml(t("card.details"))}</span>
+    </div>
+    ${sig.reasons && sig.reasons.length ? `<div class="card-reasons">${sig.reasons.slice(0,2).map(r=>"• "+escapeHtml(r)).join("<br>")}</div>` : ""}
+  `;
+  el.querySelector(".card-delete").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if(bridge) bridge.dismissSignal(sig.id);
+    el.remove();
+    cards.delete(sig.id);
+    signalData.delete(sig.id);
+    updateStats();
+  });
+  el.addEventListener("click", () => openModal(sig.id));
+  return el;
+}
+
+function applyFilter(){
+  document.querySelectorAll(".card").forEach(c => {
+    const matchChain = alertChains.has(c.dataset.chain);
+    c.style.display = matchChain ? "" : "none";
+  });
+  updateStats();
+}
+
+function updateStats(){
+  const visible = [...document.querySelectorAll(".card")].filter(c => c.style.display !== "none");
+  document.getElementById("statSignaux").textContent = visible.length;
+  document.getElementById("emptyState").style.display = visible.length === 0 ? "block" : "none";
+}
+
+// Le curseur SCORE MIN est un plancher strict : un token (SIGNAL ou VEILLE)
+// dont le score est sous le curseur ne s'affiche pas. Le backend applique déjà
+// ce seuil aux nouvelles détections ; ce garde-fou côté interface couvre en
+// plus les cartes déjà en base au moment où on baisse puis remonte le curseur.
+function passesScore(sig){
+  // Le curseur SCORE MIN fait autorité, sans exception : une carte dont le
+  // score est sous le curseur ne s'affiche pas. Pour voir les détections
+  // fraîches (score bas par nature), baisser le curseur — il descend jusqu'à
+  // 0.30.
+  return (Number(sig && sig.score) || 0) >= minScore;
+}
+
+function addSignal(sig){
+  if(sig && sig.id != null) signalData.set(sig.id, sig);  // on conserve toujours la donnée
+  if(cards.has(sig.id)) return;
+  if(!passesScore(sig)) return;                            // sous le curseur : masqué
+  const grid = document.getElementById("cardsGrid");
+  const el = renderCard(sig);
+  grid.insertBefore(el, grid.firstChild);
+  cards.set(sig.id, el);
+  applyFilter();
+}
+
+function reconcileCardsWithScore(){
+  // Retire les cartes passées sous le curseur, (ré)affiche celles qui repassent
+  // au-dessus (après un déplacement du curseur).
+  for(const [id, el] of Array.from(cards)){
+    const sig = signalData.get(id);
+    if(!sig || !passesScore(sig)){
+      el.remove();
+      cards.delete(id);
+    }
+  }
+  const grid = document.getElementById("cardsGrid");
+  for(const [id, sig] of signalData){
+    if(!cards.has(id) && passesScore(sig)){
+      const el = renderCard(sig);
+      grid.insertBefore(el, grid.firstChild);
+      cards.set(id, el);
+    }
+  }
+  applyFilter();
+}
+
+function loadWeights(weights){
+  lastWeights = weights;
+  const list = document.getElementById("weightsList");
+  list.innerHTML = "";
+  const max = Math.max(...Object.values(weights));
+  for(const [name, val] of Object.entries(weights)){
+    const row = document.createElement("div");
+    row.className = "weight-row";
+    row.innerHTML = `<span class="weight-name">${escapeHtml(tWeight(name))}</span>
+      <span class="weight-track"><span class="weight-fill" style="width:${(val/max)*100}%"></span></span>
+      <span class="weight-val">${val}</span>`;
+    list.appendChild(row);
+  }
+}
+
+function logLine(text, level){
+  const panel = document.getElementById("logPanel");
+  const line = document.createElement("div");
+  line.className = "log-line" + (level ? " " + level : "");
+  line.textContent = text;
+  panel.prepend(line);
+  while(panel.children.length > 60) panel.removeChild(panel.lastChild);
+}
+
+function formatAge(createdAtSeconds){
+  const diffSec = Math.max(0, (Date.now()/1000) - createdAtSeconds);
+  if(diffSec < 60) return t("time.justNow");
+  if(diffSec < 3600) return Math.floor(diffSec/60) + t("time.minShort");
+  if(diffSec < 86400) {
+    const h = Math.floor(diffSec/3600);
+    const m = Math.floor((diffSec%3600)/60);
+    return `${h}${t("time.hourShort")}${m > 0 ? m.toString().padStart(2,"0") : ""}`;
+  }
+  return Math.floor(diffSec/86400) + t("time.dayShort");
+}
+
+function refreshAllAges(){
+  document.querySelectorAll(".card-age").forEach(el => {
+    const created = parseFloat(el.dataset.created);
+    if(!isNaN(created)) el.textContent = formatAge(created);
+  });
+}
+setInterval(refreshAllAges, 15000);  // rafraîchit toutes les 15s, pas besoin de plus fréquent
+
+const GAUGE_CIRCUMFERENCE = 188.5;
+
+// Liens d'affiliation, ajoutés à toutes les fiches. Nansen Token God Mode
+// couvre solana/bnb/base/ethereum/robinhood ; Binance Web3 ne liste pas
+// Robinhood Chain — on n'ajoute alors pas le lien mort.
+const NANSEN_LINK_CHAIN = { solana:"solana", bsc:"bnb", base:"base", ethereum:"ethereum", robinhood:"robinhood" };
+const BINANCE_WEB3_CHAIN = { solana:"solana", bsc:"bsc", base:"base", ethereum:"ethereum" };
+
+function affiliateLinks(sig){
+  const c = sig.contract, out = [];
+  const nc = NANSEN_LINK_CHAIN[sig.chain];
+  if(nc) out.push({ label: "Nansen", url: `https://app.nansen.ai/token-god-mode?tokenAddress=${c}&chain=${nc}&tab=transactions&ref=GloriousKing225` });
+  const bc = BINANCE_WEB3_CHAIN[sig.chain];
+  if(bc) out.push({ label: "Binance Web3", url: `https://web3.binance.com/en/token/${bc}/${c}?ref=L3C8VW3Q` });
+  return out;
+}
+
+function explorerLinks(sig){
+  const c = sig.contract;
+  let base;
+  if(sig.chain === "solana"){
+    base = [
+      { label: t("link.axiom"), url: `https://axiom.trade/t/${c}/@hunter212?chain=sol`, primary: true },
+      { label: t("link.solscan"), url: `https://solscan.io/token/${c}` },
+      { label: t("link.dexscreener"), url: `https://dexscreener.com/solana/${c}` },
+    ];
+  } else if(sig.chain === "bsc"){
+    base = [
+      { label: t("link.dexscreener"), url: `https://dexscreener.com/bsc/${c}`, primary: true },
+      { label: t("link.bscscan"), url: `https://bscscan.com/token/${c}` },
+    ];
+  } else if(sig.chain === "ethereum"){
+    base = [
+      { label: t("link.dexscreener"), url: `https://dexscreener.com/ethereum/${c}`, primary: true },
+      { label: t("link.etherscan"), url: `https://etherscan.io/token/${c}` },
+    ];
+  } else {
+    base = [
+      { label: t("link.dexscreener"), url: `https://dexscreener.com/${sig.chain}/${c}`, primary: true },
+    ];
+  }
+  return base.concat(affiliateLinks(sig));
+}
+
+function openModal(id){
+  const sig = signalData.get(id);
+  if(!sig) return;
+  const links = explorerLinks(sig);
+  // Un token en VEILLE n'a ni plan d'entrée ni recommandation : la fiche le dit
+  // explicitement au lieu d'afficher des champs vides que l'oeil comblerait tout seul.
+  const isWatchDetail = (sig.tier === "veille") || (sig.verified === false);
+  const modal = document.getElementById("modalContent");
+  modal.innerHTML = `
+    <div class="modal-header">
+      <div>
+        <div class="modal-ticker">${escapeHtml(sig.ticker || "?")}</div>
+        <div class="modal-name">${escapeHtml(sig.name || "")} — ${escapeHtml((sig.chain||"?").toUpperCase())}</div>
+        <div class="modal-name" style="margin-top:-10px;">${escapeHtml(t("modal.detected"))} ${sig.created_at ? new Date(sig.created_at*1000).toLocaleString(LOCALE_MAP[currentLang]) : "?"} (${formatAge(sig.created_at || Date.now()/1000)})</div>
+      </div>
+      <button class="modal-close" id="modalCloseBtn">✕</button>
+    </div>
+    <div class="modal-score">${fmtScore(sig.score)} <span style="font-size:13px;color:var(--muted);font-family:'Inter',sans-serif;">/ 1.00 — ${escapeHtml(t("modal.risk"))} ${escapeHtml(tRisk(sig.risk_level))}</span></div>
+    ${isWatchDetail ? `<div class="watch-notice"><strong>${escapeHtml(t("modal.watchTitle"))}</strong> ${escapeHtml(t("modal.watchBody1"))}
+      ${(sig.missing_checks||[t("modal.watchFallback")]).map(m=>"<br>• "+escapeHtml(m)).join("")}
+      <br><br>${escapeHtml(t("modal.watchBody2"))}</div>` : ""}
+
+    <div class="modal-address">
+      <span style="flex:1;">${escapeHtml(sig.contract || "?")}</span>
+      <button id="copyAddrBtn">${escapeHtml(t("modal.copy"))}</button>
+    </div>
+
+    <div class="modal-grid">
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.marketcap"))}</div><div class="v">$${Math.round(sig.market_cap||0).toLocaleString()}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.liquidity"))}</div><div class="v">$${Math.round(sig.liquidity||0).toLocaleString()}</div></div>
+      ${isWatchDetail ? `
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.entryprice"))}</div><div class="v">${escapeHtml(t("modal.notcalculated"))}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.stoploss"))}</div><div class="v">${escapeHtml(t("modal.notcalculated"))}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.tp"))}</div><div class="v">${escapeHtml(t("modal.notcalculatedPlural"))}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.positionsize"))}</div><div class="v">${escapeHtml(t("modal.none"))}</div></div>` : `
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.entryprice"))}</div><div class="v">$${sig.entry_price ?? "?"}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.stoploss"))}</div><div class="v red">$${sig.stop_loss ?? "?"}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.tp"))}</div><div class="v green">${sig.tp1??"?"} / ${sig.tp2??"?"} / ${sig.tp3??"?"}</div></div>
+      <div class="modal-stat"><div class="l">${escapeHtml(t("modal.positionsize"))}</div><div class="v">$${sig.position_size_usd ?? "?"}</div></div>`}
+    </div>
+
+    <div class="modal-section-title">${escapeHtml(isWatchDetail ? t("modal.observations") : t("modal.signalreasons"))}</div>
+    <div class="modal-reasons">${(sig.reasons||[]).map(r=>`<div>${escapeHtml(r)}</div>`).join("") || `<div>${escapeHtml(t("modal.noreasons"))}</div>`}</div>
+
+    <div class="modal-section-title" style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+      <span>${escapeHtml(t("modal.recapTitle"))}</span>
+      <button id="copyRecapBtn" style="font-family:'Inter',sans-serif;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border,#333);background:transparent;color:var(--muted);cursor:pointer;">${escapeHtml(t("modal.recapCopy"))}</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);font-family:'Inter',sans-serif;margin-bottom:6px;">${escapeHtml(t("modal.recapHint"))}</div>
+    <textarea id="recapText" readonly rows="12" style="width:100%;box-sizing:border-box;background:var(--panel,#111);color:var(--text,#ddd);border:1px solid var(--border,#333);border-radius:8px;padding:10px;font-family:'Inter',sans-serif;font-size:12px;line-height:1.5;resize:vertical;">${escapeHtml(t("modal.recapLoading"))}</textarea>
+
+    <div class="modal-links">
+      ${links.map(l => `<a class="modal-link ${l.primary?"":"secondary"}" data-url="${escapeHtml(l.url)}">${escapeHtml(l.label)}</a>`).join("")}
+    </div>
+  `;
+
+  modal.querySelector("#modalCloseBtn").addEventListener("click", closeModal);
+  modal.querySelector("#copyAddrBtn").addEventListener("click", () => {
+    navigator.clipboard.writeText(sig.contract || "");
+    const btn = modal.querySelector("#copyAddrBtn");
+    btn.textContent = t("modal.copied");
+    setTimeout(() => btn.textContent = t("modal.copy"), 1500);
+  });
+  modal.querySelectorAll(".modal-link").forEach(a => {
+    a.addEventListener("click", () => {
+      if(bridge) bridge.openExternalUrl(a.dataset.url);
+    });
+  });
+
+  const recapArea = modal.querySelector("#recapText");
+  const recapBtn = modal.querySelector("#copyRecapBtn");
+  const applyRecap = (txt) => {
+    recapArea.value = (txt && txt.trim()) ? txt : t("modal.recapEmpty");
+  };
+  if(bridge && bridge.getSignalRecap){
+    try {
+      bridge.getSignalRecap(id, applyRecap);
+    } catch(e){
+      applyRecap("");
+    }
+  } else {
+    applyRecap("");
+  }
+  recapBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(recapArea.value || "");
+    recapBtn.textContent = t("modal.copied");
+    setTimeout(() => recapBtn.textContent = t("modal.recapCopy"), 1500);
+  });
+
+  document.getElementById("modalBackdrop").classList.add("open");
+}
+
+function closeModal(){
+  document.getElementById("modalBackdrop").classList.remove("open");
+}
+
+document.getElementById("modalBackdrop").addEventListener("click", (e) => {
+  if(e.target.id === "modalBackdrop") closeModal();
+});
+
+function applyStats(stats){
+  // stats = { "1h": {count, win_rate_pct, avg_return_pct}, "6h": {...}, "24h": {...} }
+  document.querySelectorAll(".gauge").forEach(gaugeEl => {
+    const horizon = gaugeEl.dataset.horizon;
+    const s = stats[horizon] || { count: 0, win_rate_pct: null, avg_return_pct: null };
+    const fill = gaugeEl.querySelector(".gauge-fill");
+    const valueEl = gaugeEl.querySelector(".gauge-value");
+    const labelEl = gaugeEl.querySelector(".gauge-label");
+
+    if(s.count > 0 && s.win_rate_pct !== null){
+      const offset = GAUGE_CIRCUMFERENCE * (1 - s.win_rate_pct / 100);
+      fill.style.strokeDashoffset = offset;
+      fill.style.stroke = s.win_rate_pct >= 50 ? "var(--success)" : "var(--danger)";
+      valueEl.textContent = s.win_rate_pct + "%";
+    } else {
+      fill.style.strokeDashoffset = GAUGE_CIRCUMFERENCE;
+      valueEl.textContent = "—";
+    }
+    labelEl.textContent = horizon.toUpperCase() + " (" + s.count + ")";
+  });
+
+  const s24 = stats["24h"] || {};
+  document.getElementById("statWinRate").textContent =
+    (s24.win_rate_pct !== null && s24.win_rate_pct !== undefined) ? s24.win_rate_pct + "%" : "—";
+  document.getElementById("statAvgReturn").textContent =
+    (s24.avg_return_pct !== null && s24.avg_return_pct !== undefined)
+      ? (s24.avg_return_pct >= 0 ? "+" : "") + s24.avg_return_pct + "%" : "—";
+}
+
+// --- Contrôles ---
+// L'affichage suit le curseur en continu, mais la commande n'est envoyée au
+// backend qu'au relâchement (voir l'écouteur "change" plus bas). Envoyer sur
+// "input" produisait un appel et une ligne de journal par pixel de
+// déplacement : le démarrage remplissait la console de « Seuil de score
+// minimum réglé à ... » pour chaque valeur intermédiaire traversée.
+document.getElementById("scoreSlider").addEventListener("input", (e) => {
+  minScore = parseInt(e.target.value);
+  const pct = ((minScore - 30) / 70) * 100;
+  e.target.style.setProperty("--fill", pct + "%");
+  document.getElementById("scoreSliderValue").textContent = (minScore/100).toFixed(2);
+  document.getElementById("statSeuil").textContent = (minScore/100).toFixed(2);
+});
+
+// Un « change » peut aussi être déclenché par le navigateur lui-même (voir la
+// note plus bas sur la restauration Chromium), pas seulement par un geste de
+// l'utilisateur. On ne synchronise le backend que si l'utilisateur a
+// réellement touché le curseur (souris ou clavier) — sinon un « change »
+// silencieux au chargement pourrait abaisser le seuil sans que personne ne
+// l'ait demandé, ce qui contredirait le principe même du curseur (plancher
+// strict, choisi par l'utilisateur, sans contournement).
+let userTouchedScoreSlider = false;
+["pointerdown", "keydown"].forEach(evt => {
+  document.getElementById("scoreSlider").addEventListener(evt, () => { userTouchedScoreSlider = true; });
+});
+
+document.getElementById("scoreSlider").addEventListener("change", (e) => {
+  if (!userTouchedScoreSlider) {
+    e.target.value = minScore;   // ignore une restauration silencieuse, garde la valeur voulue
+    return;
+  }
+  minScore = parseInt(e.target.value);
+  if(bridge) bridge.setMinScore(minScore);
+  reconcileCardsWithScore();   // applique le nouveau plancher aux cartes déjà à l'écran
+});
+
+// Sélecteur de chaînes : chaque puce active/désactive une chaîne. On empêche
+// de tout décocher (au moins une chaîne doit rester scannée).
+document.querySelectorAll("#chainToggles .chain-chip").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const chain = btn.dataset.chain;
+    const willEnable = !alertChains.has(chain);
+    if(!willEnable && alertChains.size === 1) return;  // garde-fou : jamais zéro
+    if(willEnable) alertChains.add(chain); else alertChains.delete(chain);
+    btn.classList.toggle("active", willEnable);
+    if(bridge) bridge.toggleChain(chain, willEnable);
+    applyFilter();
+  });
+});
+
+document.getElementById("selMode").addEventListener("change", (e) => {
+  if(bridge) bridge.setMode(e.target.value);
+});
+
+document.getElementById("btnRun").addEventListener("click", () => { if(bridge) bridge.run(); });
+document.getElementById("btnStop").addEventListener("click", () => { if(bridge) bridge.stop(); });
+document.getElementById("btnClearAll").addEventListener("click", () => {
+  if(bridge) bridge.clearAll();
+  document.getElementById("cardsGrid").querySelectorAll(".card").forEach(c=>c.remove());
+  cards.clear();
+  signalData.clear();
+  updateStats();
+});
+
+let paused = false;
+document.getElementById("btnPause").addEventListener("click", (e) => {
+  paused = !paused;
+  document.getElementById("btnPause").classList.toggle("active", paused);
+  if(bridge) bridge.togglePause(paused);
+});
+
+let autoBuy = false;
+document.getElementById("btnAutoBuy").addEventListener("click", (e) => {
+  autoBuy = !autoBuy;
+  refreshToggleLabels();
+  e.currentTarget.classList.toggle("active", autoBuy);
+  if(bridge) bridge.setAutoBuy(autoBuy);
+});
+
+let telegramOn = true;
+document.getElementById("btnTelegram").addEventListener("click", (e) => {
+  telegramOn = !telegramOn;
+  refreshToggleLabels();
+  e.currentTarget.classList.toggle("active", telegramOn);
+  if(bridge) bridge.setTelegram(telegramOn);
+});
+
+let nansenOn = true;
+document.getElementById("btnNansen").addEventListener("click", (e) => {
+  nansenOn = !nansenOn;
+  refreshToggleLabels();
+  e.currentTarget.classList.toggle("active", nansenOn);
+  if(bridge) bridge.setNansenEnabled(nansenOn);
+});
+
+// Coupe complètement le niveau VEILLE (détection précoce NON vérifiée).
+// Le suivi interne continue : un token coupé ici peut toujours être promu en
+// SIGNAL vérifié plus tard, il n'encombre simplement plus l'écran ni Telegram.
+let watchOn = true;
+document.getElementById("btnWatch").addEventListener("click", (e) => {
+  watchOn = !watchOn;
+  refreshToggleLabels();
+  e.currentTarget.classList.toggle("active", watchOn);
+  if(bridge) bridge.setWatchEnabled(watchOn);
+});
+
+// PROFIL de scan : DEGEN (défaut — firehose pump.fun, VEILLE précoce, détection
+// dès la 1re minute, priorité BSC/Base/Robinhood) <-> QUALITY (cible « potentiel
+// Binance Alpha » : âge mini 12 h, smart money Nansen obligatoire).
+// Le profil réellement actif est resynchronisé au démarrage depuis
+// config.SCAN_PROFILE (bridge.getScanProfile, plus bas).
+let profileQuality = false;
+document.getElementById("btnProfile").addEventListener("click", (e) => {
+  profileQuality = !profileQuality;
+  refreshToggleLabels();
+  e.currentTarget.classList.toggle("active", profileQuality);
+  if(bridge) bridge.setScanProfile(profileQuality ? "quality" : "degen");
+});
+
+document.getElementById("selLang").addEventListener("change", (e) => {
+  setLanguage(e.target.value);
+});
+
+// --- Init du pont Qt WebChannel ---
+new QWebChannel(qt.webChannelTransport, function(channel){
+  bridge = channel.objects.bridge;
+
+  // Aligne le backend sur la position de départ du curseur, pour que « SEUIL
+  // ACTIF » dans l'en-tête et le seuil réellement appliqué coïncident dès le
+  // lancement.
+  //
+  // Cette page (fichier local) est rechargée à l'identique à chaque
+  // lancement de l'appli : le moteur Chromium embarqué restaure parfois,
+  // juste après ce script, la position du curseur d'une session précédente
+  // (comportement natif de Chromium sur un rechargement, indépendant de tout
+  // clic de l'utilisateur). Un « change » silencieux arrivait alors après ce
+  // setMinScore(80) et abaissait le seuil réellement appliqué à une vieille
+  // valeur oubliée — sans aucune action de l'utilisateur, contrairement à ce
+  // qu'exige le curseur (seuil strict, sans contournement). On réaffirme donc
+  // la valeur voulue deux frames plus tard, après qu'une éventuelle
+  // restauration ait eu lieu, pour avoir toujours le dernier mot.
+  const scoreSliderEl = document.getElementById("scoreSlider");
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (scoreSliderEl.value !== String(minScore)) {
+      scoreSliderEl.value = minScore;
+      scoreSliderEl.dispatchEvent(new Event("input"));
+    }
+    bridge.setMinScore(minScore);
+  }));
+
+  // Reflète la langue d'affichage persistée (storage.db, réglée via ce même
+  // sélecteur lors d'une session précédente).
+  bridge.getUiLanguage(function(lang){
+    setLanguage(lang, false);   // false : ne pas ré-écrire la valeur qu'on vient de lire
+  });
+
+  // Reflète le profil réellement actif (variable d'environnement SCAN_PROFILE).
+  bridge.getScanProfile(function(name){
+    profileQuality = (name !== "degen");
+    const btn = document.getElementById("btnProfile");
+    refreshToggleLabels();
+    btn.classList.toggle("active", profileQuality);
+  });
+
+  // Reflète les chaînes réellement actives côté scanner (state.active_chains).
+  bridge.getActiveChains(function(jsonStr){
+    let list;
+    try { list = JSON.parse(jsonStr); } catch(e){ return; }
+    if(!Array.isArray(list) || !list.length) return;
+    alertChains = new Set(list);
+    document.querySelectorAll("#chainToggles .chain-chip").forEach(b => {
+      b.classList.toggle("active", alertChains.has(b.dataset.chain));
+    });
+    applyFilter();
+  });
+
+  bridge.newSignal.connect(function(jsonStr){
+    addSignal(JSON.parse(jsonStr));
+  });
+  bridge.logMessage.connect(function(text){
+    let level = "";
+    if(text.includes("ERROR")) level = "error";
+    else if(text.includes("WARNING")) level = "warn";
+    logLine(text, level);
+  });
+  bridge.statsUpdated.connect(function(jsonStr){
+    applyStats(JSON.parse(jsonStr));
+  });
+
+  bridge.getExistingSignals(function(jsonStr){
+    const existing = JSON.parse(jsonStr);
+    existing.forEach(addSignal);
+    refreshAllAges();
+  });
+  bridge.getWeights(function(jsonStr){
+    loadWeights(JSON.parse(jsonStr));
+  });
+  bridge.getStats(function(jsonStr){
+    applyStats(JSON.parse(jsonStr));
+  });
+});
+
+// Init affichage slider
+document.getElementById("scoreSlider").dispatchEvent(new Event("input"));
+
+// Rend l'interface dans la langue par défaut avant même que le pont Qt soit
+// connecté (évite un flash de texte non traduit le temps de la réponse de
+// bridge.getUiLanguage plus haut, qui corrige ensuite si une autre langue a
+// été choisie lors d'une session précédente).
+applyI18n();
+</script>
+</body>
+</html>
