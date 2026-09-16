@@ -55,4 +55,4 @@ Python, PyQt6 + QWebEngineView (HTML/JS dashboard rendered natively, no browser/
 
 ---
 
-Built for every Degen
+Built for every Degen, Join the legends here: https://nsn.ai/GloriousKing225
