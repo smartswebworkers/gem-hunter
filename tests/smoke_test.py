@@ -840,6 +840,7 @@ check(_sc_ch.state.active_chains == set(config.ACTIVE_CHAINS),
 
 _sc_ch.toggle_chain("bsc", False)
 _sc_ch.toggle_chain("base", False)
+_sc_ch.toggle_chain("arc", False)
 check(_sc_ch.state.active_chains == {"solana", "robinhood"},
       "toggle_chain(False) retire une chaine du scan (donc des alertes)",
       f"-> {sorted(_sc_ch.state.active_chains)}")
@@ -851,6 +852,7 @@ check("bsc" in _sc_ch.state.active_chains,
 # Garde-fou : on ne peut pas tout desactiver.
 _sc_ch.toggle_chain("solana", False)
 _sc_ch.toggle_chain("bsc", False)
+_sc_ch.toggle_chain("arc", False)
 _sc_ch.toggle_chain("robinhood", False)   # tentative de retirer la derniere
 check(len(_sc_ch.state.active_chains) == 1 and "robinhood" in _sc_ch.state.active_chains,
       "toggle_chain refuse de retirer la derniere chaine active",
@@ -1521,6 +1523,57 @@ try:
           and _st["security_available"] is False,
           "robinhood._probe : découverte via Nansen seul => chaîne active en VEILLE",
           f"-> {_st['detail']}")
+
+    # Arc Network (Circle, chain ID 5042) : câblée comme Robinhood, mais SANS
+    # entrée Nansen (aucune couverture confirmée à son lancement) — vérifié
+    # explicitement en négatif.
+    from chains import arc as _arc
+    check("arc" in config.ACTIVE_CHAINS and "arc" in _CM
+          and config.GOPLUS_CHAIN_IDS.get("arc") == "5042"
+          and not nansen.supports_chain("arc")
+          and not nansen.screener_supports_chain("arc"),
+          "Arc : chaîne active + module câblés, chain ID GoPlus correct, "
+          "aucune couverture Nansen supposée")
+
+    _arc_orig = (geckoterminal.resolve_network, dexscreener.resolve_chain_id,
+                 _arc.goplus.get_supported_chains, _arc.goplus.supports_chain)
+
+    # Cas 1 : aucun indexeur de découverte ne couvre encore la chaîne =>
+    # inactive, aucun candidat, aucun créneau de scan gaspillé.
+    geckoterminal.resolve_network = lambda chain: None
+    dexscreener.resolve_chain_id = lambda chain: None
+    _arc.goplus.get_supported_chains = lambda: []
+    _arc.goplus.supports_chain = lambda chain: False
+    try:
+        _st_arc_none = _arc._probe(force=True)
+        _disc_arc_none = _arc.discover_candidates()
+    finally:
+        (geckoterminal.resolve_network, dexscreener.resolve_chain_id,
+         _arc.goplus.get_supported_chains, _arc.goplus.supports_chain) = _arc_orig
+    check(_st_arc_none["discovery_available"] is False and _disc_arc_none == [],
+          "arc._probe : aucun indexeur ne couvre encore la chaîne => aucun candidat",
+          f"-> {_st_arc_none['detail']}")
+
+    # Cas 2 : GeckoTerminal indexe déjà le réseau mais GoPlus ne couvre pas
+    # encore le chain ID 5042 => découverte active, niveau VEILLE seulement.
+    geckoterminal.resolve_network = lambda chain: "arc" if chain == "arc" else None
+    dexscreener.resolve_chain_id = lambda chain: None
+    _arc.goplus.get_supported_chains = lambda: ["1", "56", "8453"]  # 5042 absent
+    _arc.goplus.supports_chain = lambda chain: False
+    try:
+        _st_arc_watch = _arc._probe(force=True)
+    finally:
+        (geckoterminal.resolve_network, dexscreener.resolve_chain_id,
+         _arc.goplus.get_supported_chains, _arc.goplus.supports_chain) = _arc_orig
+    check(_st_arc_watch["discovery_available"] is True
+          and _st_arc_watch["security_available"] is False,
+          "arc._probe : découverte GeckoTerminal seule, GoPlus absent => VEILLE uniquement",
+          f"-> {_st_arc_watch['detail']}")
+
+    _arc_cand = [{"chain": "arc", "contract": "0xARC1", "ticker": "A1"}]
+    _arc_enriched = _arc.enrich_with_security(dict(_arc_cand[0]))
+    check(_arc_enriched["security"]["data_available"] is False,
+          "arc.enrich_with_security : sécurité non vérifiable tant que GoPlus ne couvre pas 5042")
 
     # 13d. La découverte GeckoTerminal est mise en cache : un second appel
     #      immédiat ne refait PAS de requête réseau (c'est ce qui faisait

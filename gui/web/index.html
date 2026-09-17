@@ -298,6 +298,7 @@ input[type=range]::-webkit-slider-thumb{
           <button type="button" class="cmd-btn chain-chip active" data-chain="bsc">BSC</button>
           <button type="button" class="cmd-btn chain-chip active" data-chain="base">BASE</button>
           <button type="button" class="cmd-btn chain-chip active" data-chain="robinhood">ROBINHOOD</button>
+          <button type="button" class="cmd-btn chain-chip active" data-chain="arc">ARC</button>
         </div>
       </div>
       <div class="slider-wrap">
@@ -371,7 +372,7 @@ const signalData = new Map();
 // fois l'affichage des cartes ET ce que le scanner scanne réellement
 // (bridge.toggleChain -> scanner.toggle_chain -> state.active_chains). Une
 // chaîne décochée n'est plus scannée du tout : ni carte, ni alerte Telegram.
-let alertChains = new Set(["solana", "bsc", "base", "robinhood"]);
+let alertChains = new Set(["solana", "bsc", "base", "robinhood", "arc"]);
 let minScore = 80;
 
 // =============================================================================

@@ -44,8 +44,8 @@ API_KEYS = {
 # détection au démarrage). Ethereum reste disponible dans l'UI mais n'est plus
 # scannée par défaut : elle consommait du budget de rate-limit GoPlus au
 # détriment des trois chaînes ciblées.
-ACTIVE_CHAINS = ["solana", "bsc", "base", "robinhood"]
-AVAILABLE_CHAINS = ["solana", "bsc", "base", "robinhood", "ethereum"]
+ACTIVE_CHAINS = ["solana", "bsc", "base", "robinhood", "arc"]
+AVAILABLE_CHAINS = ["solana", "bsc", "base", "robinhood", "arc", "ethereum"]
 
 # GoPlus chain IDs (nécessaires pour les endpoints token_security)
 GOPLUS_CHAIN_IDS = {
@@ -59,6 +59,9 @@ GOPLUS_CHAIN_IDS = {
     "robinhood": "4663",  # Robinhood Chain (Arbitrum Orbit). Vérifié au démarrage
                           # contre /api/v1/supported_chains : retiré tout seul si
                           # GoPlus ne la couvre pas encore (voir data_sources/goplus.py).
+    "arc": "5042",  # Arc Network (Circle), mainnet public depuis le 16/09/2026.
+                    # Même vérification automatique que Robinhood Chain — voir
+                    # chains/arc.py.
     # Solana est géré via un endpoint dédié GoPlus (solana_token_security)
 }
 
@@ -630,6 +633,7 @@ CHAIN_SCAN_MULTIPLIER = {
     "bsc": 1,       # remonté de 2 à 1 : BNB Chain est une cible prioritaire
     "base": 1,      # cible prioritaire au même titre que BNB Chain
     "robinhood": 1,  # remonté de 2 à 1 : chaîne prioritaire, scannée chaque cycle
+    "arc": 1,        # chaîne récente en cours d'activation (voir chains/arc.py)
     "ethereum": 4,
 }
 
@@ -638,7 +642,10 @@ CHAIN_SCAN_MULTIPLIER = {
 # vérifications s'exécutent en premier, avant que le volume Solana (300+
 # candidats par cycle, RPC public limité) ne consomme le temps et le budget
 # d'appels du cycle. Une chaîne absente de cette liste est traitée ensuite.
-CHAIN_SCAN_PRIORITY = ["bsc", "base", "robinhood", "solana", "ethereum"]
+# Arc est placée après les trois chaînes EVM déjà établies : tant qu'elle
+# n'est pas indexée par les sources de découverte (voir chains/arc.py), son
+# traitement coûte un appel de sonde négligeable et rien de plus.
+CHAIN_SCAN_PRIORITY = ["bsc", "base", "robinhood", "arc", "solana", "ethereum"]
 
 # Plafond de vérifications par cycle, PAR CHAÎNE. Sur les chaînes EVM,
 # l'enrichissement sécurité est un appel GoPlus groupé (lots de 25) sans RPC
@@ -648,6 +655,7 @@ CHAIN_MAX_ENRICHMENTS_PER_CYCLE = {
     "bsc": 40,
     "base": 40,
     "robinhood": 60,   # ~70 candidats/cycle depuis le Token Screener Nansen
+    "arc": 40,         # même plafond que BSC/Base en attendant un volume mesuré
 }
 
 PERFORMANCE_HORIZONS = {

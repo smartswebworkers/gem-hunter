@@ -36,12 +36,16 @@ CHAIN_ID_MAP = {
 # Identifiants candidats testés pour les chaînes pas encore cartographiées.
 CHAIN_ID_CANDIDATES = {
     "robinhood": ("robinhood", "robinhoodchain", "rhc", "robinhood-chain"),
+    "arc": ("arc", "circle-arc", "arcnetwork", "arc-network"),
 }
 
 # Token de référence servant à tester si une chaîne est réellement indexée
 # (le wrapped natif est toujours la paire la plus liquide d'une chaîne).
+# Arc n'a pas de wrapped natif : l'USDC EST l'actif de gas de la chaîne, donc
+# la paire la plus liquide plausible dès le lancement.
 _PROBE_QUERIES = {
     "robinhood": "WETH",
+    "arc": "USDC",
 }
 
 _resolved_chain_ids: dict[str, str | None] = {}

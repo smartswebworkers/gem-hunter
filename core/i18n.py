@@ -435,6 +435,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "GoPlus does not cover Robinhood Chain yet (chain ID 4663)",
         "zh": "GoPlus 尚未覆盖 Robinhood Chain（chain ID 4663）",
     },
+    "unavailable.arc_goplus": {
+        "fr": "GoPlus ne couvre pas encore Arc Network (chain ID 5042)",
+        "en": "GoPlus does not cover Arc Network yet (chain ID 5042)",
+        "zh": "GoPlus 尚未覆盖 Arc Network（chain ID 5042）",
+    },
     "unavailable.generic": {
         "fr": "source de sécurité injoignable",
         "en": "security source unreachable",

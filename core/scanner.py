@@ -27,7 +27,7 @@ import threading
 import time
 import logging
 
-from chains import solana, bsc, base, ethereum, robinhood
+from chains import solana, bsc, base, ethereum, robinhood, arc
 from core.scoring import compute_score
 from core.security_checks import (
     evaluate_market_prefilter, creator_reputation_veto, is_first_minute_candidate,
@@ -47,6 +47,7 @@ CHAIN_MODULES = {
     "base": base,
     "ethereum": ethereum,
     "robinhood": robinhood,
+    "arc": arc,
 }
 
 

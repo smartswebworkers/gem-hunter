@@ -1592,3 +1592,57 @@ mécanique de transport (groupée au lieu d'unitaire).
 absence de mise en cache d'un compte manquant, lecture depuis le cache sans
 appel supplémentaire, `enrich_batch` déclenchant bien le pré-chargement pour
 tout le lot.
+
+## Mise à jour 27 — Ajout d'Arc Network (Circle, chain ID 5042)
+
+**Demandé par l'utilisateur.** Arc est le layer-1 EVM lancé par Circle en
+mainnet public le 16 septembre 2026 (USDC comme actif de gas natif,
+validateurs fondateurs institutionnels — BlackRock, Visa, Mastercard, DTCC —
+accès développeur annoncé permissionless). La chaîne a été ajoutée le
+lendemain de son lancement : aucun indexeur (GoPlus, GeckoTerminal,
+DexScreener, Nansen) ne la couvrait encore au moment d'écrire ce correctif, et
+aucune donnée de marché réelle n'existe pour la calibrer.
+
+**Correctif, même doctrine que Robinhood Chain (Mise à jour antérieure) :
+détecter la disponibilité réelle plutôt que la supposer.**
+- `chains/arc.py` (nouveau) : sonde GeckoTerminal + DexScreener pour la
+  découverte, et GoPlus (chain ID `5042`) pour la sécurité, exactement comme
+  `chains/robinhood.py`. Tant que la découverte n'est couverte par personne,
+  la chaîne reste inactive sans consommer de créneau de scan. Dès que la
+  découverte répond mais pas encore GoPlus, elle scanne en niveau VEILLE
+  uniquement (jamais de SIGNAL sans sécurité vérifiable). Re-testée toutes les
+  30 min, aucune intervention manuelle nécessaire quand la couverture arrive.
+- **Aucune entrée Nansen ajoutée** (`NANSEN_CHAIN_MAP` / `NANSEN_SCREENER_CHAIN_MAP`)
+  : aucune confirmation que Nansen couvre déjà la chaîne à son lancement, et
+  supposer une couverture non confirmée aurait pu déclarer à tort le
+  smart-money « disponible mais absent » au lieu de « non couvert ». Vérifié
+  explicitement en négatif dans les tests.
+- **Aucune surcharge `CHAIN_MARKET_OVERRIDES` / `CHAIN_MAX_PAIR_AGE_HOURS`**
+  ajoutée : contrairement à BSC/Base/Robinhood (surcharges justifiées par des
+  mesures réelles de marché), aucune donnée n'existe encore pour Arc. La
+  chaîne utilise les seuils globaux du profil actif tels quels plutôt qu'un
+  assouplissement inventé.
+- `config.py` : `arc` ajouté à `ACTIVE_CHAINS`/`AVAILABLE_CHAINS`,
+  `GOPLUS_CHAIN_IDS["arc"] = "5042"`, `CHAIN_SCAN_PRIORITY`,
+  `CHAIN_SCAN_MULTIPLIER`, `CHAIN_MAX_ENRICHMENTS_PER_CYCLE` (plafond aligné
+  sur BSC/Base en attendant un volume mesuré).
+- `core/scanner.py::CHAIN_MODULES`, `data_sources/dexscreener.py`
+  (`CHAIN_ID_CANDIDATES`, `_PROBE_QUERIES` — sonde sur "USDC", l'actif de gas
+  natif de la chaîne, faute de wrapped natif comme WETH) et
+  `data_sources/geckoterminal.py` (`NETWORK_SEARCH_HINTS`) câblés pour
+  l'auto-détection, même mécanique que Robinhood Chain.
+- `gui/web/index.html` : puce ARC ajoutée au sélecteur de chaînes du
+  dashboard.
+- `core/i18n.py` : `unavailable.arc_goplus` (fr/en/zh).
+
+Aucun veto de sécurité touché, aucun seuil assoupli — une chaîne de plus,
+soumise aux mêmes vérifications que les autres, jamais promue en SIGNAL sans
+données réelles.
+
+223 tests, 0 échec (219 → 223) : câblage vérifié (chaîne active, module,
+chain ID GoPlus, absence volontaire de couverture Nansen), les trois cas de
+`_probe` (aucun indexeur, découverte seule, sécurité vérifiable), et
+`enrich_with_security` qui ne renvoie jamais une sécurité « disponible » sans
+couverture GoPlus confirmée. Deux tests préexistants (`toggle_chain`)
+corrigés : leurs attentes étaient câblées en dur sur l'ancienne liste à 4
+chaînes.

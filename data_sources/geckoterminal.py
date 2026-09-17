@@ -51,6 +51,7 @@ NETWORK_MAP = {
 # l'identifiant exact chez GeckoTerminal (voir chains/robinhood.py).
 NETWORK_SEARCH_HINTS = {
     "robinhood": ("robinhood", "rhc", "robinhood-chain"),
+    "arc": ("arc", "circle-arc", "arc-network"),
 }
 
 _GT_HEADERS = {"Accept": "application/json;version=20230302"}
