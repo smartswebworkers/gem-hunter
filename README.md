@@ -1,6 +1,6 @@
 # AI Multichain Gem Hunter
 
-A multichain memecoin scanner (Solana, BSC, Base, Robinhood Chain) that uses **Nansen's Smart Money data** as a core trust signal, not a cosmetic add-on, to separate real early opportunities from the hundreds of rugs launched every hour.
+A multichain memecoin scanner (Solana, BSC, Base, Robinhood Chain, Arc Network) that uses **Nansen's Smart Money data** as a core trust signal, not a cosmetic add-on, to separate real early opportunities from the hundreds of rugs launched every hour.
 
 
 ## Why Smart Money, not just on-chain heuristics
@@ -28,6 +28,8 @@ What that Smart Money signal actually drives:
 ## The rest of the pipeline (context, not the point of this submission)
 
 Nansen's data sits on top of a full multichain scanner: DexScreener/GeckoTerminal/PumpPortal for market discovery, GoPlus + RugCheck + direct Solana RPC reads (mint/freeze authority, real holder concentration, creator holdings) for security, a two-tier output (unverified early **WATCH** vs. fully-verified **SIGNAL**), and Telegram alerting. See [`CORRECTIFS.md`](CORRECTIFS.md) for the detailed build log.
+
+**Arc Network** ([`chains/arc.py`](chains/arc.py)) is wired the same way Robinhood Chain was when it launched: the bot probes GeckoTerminal/DexScreener/GoPlus for real coverage instead of assuming it, and self-activates (discovery-only in WATCH, then full SIGNAL once GoPlus confirms chain ID `5042`) the moment each indexer catches up — no code change needed on that day.
 
 ## Running it
 
