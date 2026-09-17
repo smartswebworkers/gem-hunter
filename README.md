@@ -54,4 +54,12 @@ Python, PyQt6 + QWebEngineView (HTML/JS dashboard rendered natively, no browser/
 
 ---
 
+How to launch the bot: 
+
+1- Launch cmd in the folder
+
+2- Type python main.py in the terminal
+
+ The bot will be launched
+
 Built for every Degen, Join the legends here: https://nsn.ai/GloriousKing225
