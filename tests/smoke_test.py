@@ -1668,8 +1668,12 @@ check("RCAP" in _fr and "RCAP" in _en and "RCAP" in _zh,
       "build_recap : le ticker apparait dans les 3 versions")
 check(_fr != _en and _en != _zh,
       "build_recap : les 3 langues donnent des textes distincts")
-check("Conviction" in _fr and "Conviction:" in _en,
+check("conviction" in _fr.lower() and "conviction:" in _en.lower(),
       "build_recap : la ligne de conviction est presente")
+check("—" not in _fr and "—" not in _en and "—" not in _zh,
+      "build_recap : plus aucun tiret cadratin dans le texte genere (virgules a la place)")
+check(_fr.startswith(_recap._TX["opener"]["fr"]),
+      "build_recap : accroche humaine en tete du texte")
 check("400%" in _fr,
       "build_recap : le pic suivi (+400%) apparait dans le texte")
 check(_recap.build_recap(999_999, "fr") == "",

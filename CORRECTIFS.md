@@ -1646,3 +1646,27 @@ chain ID GoPlus, absence volontaire de couverture Nansen), les trois cas de
 couverture GoPlus confirmée. Deux tests préexistants (`toggle_chain`)
 corrigés : leurs attentes étaient câblées en dur sur l'ancienne liste à 4
 chaînes.
+
+## Mise à jour 28 — Ton plus humain pour le récap réseaux sociaux, virgules au lieu des tirets cadratins
+
+**Demandé par l'utilisateur.** Le texte produit par `core/signal_recap.py`
+(bouton « recap » sur un signal, prêt à coller sur les réseaux) lisait comme
+un rapport technique (« Conviction : forte (score 8/10). ») plutôt qu'un post
+qu'un humain écrirait. Deux changements, en fr/en/zh :
+
+- **Accroche d'ouverture** ajoutée en tête du texte (nouvelle clé `opener`) :
+  « Jetons un coup d'œil sur notre trouvaille du jour ! » (et équivalents
+  anglais/chinois), pour donner le ton avant les faits.
+- **Toutes les phrases reformulées** en style plus naturel (« Il a d'abord été
+  repéré par... » au lieu de « Repéré par... »), et **tous les tirets
+  cadratins (—) remplacés par des virgules ou des connecteurs** (« donc »,
+  « mais »), sur demande explicite.
+
+Aucune information retirée ni inventée : mêmes données, même distinction
+stricte VEILLE (jamais présentée comme un signal d'achat) / SIGNAL, mêmes
+clauses de prudence honnêtes en fin de texte — seule la formulation change.
+
+225 tests, 0 échec (223 → 225) : absence de tiret cadratin dans les 3 langues
+vérifiée explicitement, accroche présente en tête, et les vérifications
+préexistantes (ticker, distinction VEILLE/SIGNAL, clause "not a buy signal")
+toujours vraies avec la nouvelle formulation.

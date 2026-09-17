@@ -50,77 +50,86 @@ _DUR_UNITS = {
 _DUR_SUBMINUTE = {"fr": "moins d'une minute", "en": "under a minute", "zh": "不到一分钟"}
 
 # Fragments de phrase. {placeholders} remplis via str.format.
+# Ton volontairement humain, pas un rapport technique : c'est un texte pensé
+# pour être publié tel quel sur les réseaux sociaux. Aucune virgule cadratin
+# (—) n'est utilisée nulle part ici, sur demande explicite : la ponctuation
+# reste la virgule, plus naturelle à lire dans un post.
 _TX = {
+    "opener": {
+        "fr": "Jetons un coup d'œil sur notre trouvaille du jour !",
+        "en": "Let's take a look at today's find!",
+        "zh": "一起来看看我们今天的发现吧！",
+    },
     "header": {
-        "fr": "{ticker} — {name} ({chain}). Détecté le {detected}, à une capitalisation d'entrée de ${entry_cap}.",
-        "en": "{ticker} — {name} ({chain}). Detected on {detected}, at an entry cap of ${entry_cap}.",
-        "zh": "{ticker} — {name}（{chain}）。检测时间 {detected}，入场市值 ${entry_cap}。",
+        "fr": "{ticker} ({name}) sur {chain}, repéré le {detected}, avec une capitalisation d'entrée de ${entry_cap}.",
+        "en": "{ticker} ({name}) on {chain}, spotted on {detected}, with an entry cap of ${entry_cap}.",
+        "zh": "{ticker}（{name}），{chain} 链，检测时间 {detected}，入场市值 ${entry_cap}。",
     },
     "conviction": {
-        "fr": "Conviction : {conviction} (score {confidence}/10).",
-        "en": "Conviction: {conviction} (confidence {confidence}/10).",
-        "zh": "信念：{conviction}（置信度 {confidence}/10）。",
+        "fr": "Conviction : {conviction}, avec un score de confiance de {confidence}/10.",
+        "en": "Conviction: {conviction}, with a confidence score of {confidence}/10.",
+        "zh": "信念：{conviction}，置信度评分 {confidence}/10。",
     },
     "conv.very_high": {"fr": "très forte", "en": "very high", "zh": "极高"},
     "conv.high": {"fr": "forte", "en": "high", "zh": "高"},
     "conv.moderate": {"fr": "modérée", "en": "moderate", "zh": "中等"},
     "conv.low": {"fr": "faible", "en": "low", "zh": "低"},
     "signals.signal": {
-        "fr": "{fired} critères de scoring déclenchés dont {strong} forts, et toutes les vérifications de sécurité passées (aucun veto anti-rug).",
-        "en": "{fired} scoring criteria fired ({strong} of them strong), and every security check passed (no anti-rug veto).",
-        "zh": "触发了 {fired} 项评分标准（其中 {strong} 项为强信号），并通过全部安全检查（无反 rug 否决）。",
+        "fr": "{fired} critères de scoring déclenchés, dont {strong} forts, et toutes les vérifications de sécurité sont passées, aucun veto anti-rug.",
+        "en": "{fired} scoring criteria fired, {strong} of them strong, and every security check passed, no anti-rug veto.",
+        "zh": "触发了 {fired} 项评分标准，其中 {strong} 项为强信号，并通过全部安全检查，无反 rug 否决。",
     },
     "signals.watch": {
-        "fr": "{fired} critères de scoring déclenchés dont {strong} forts, mais {pending} vérification(s) de sécurité encore impossible(s) : détection précoce, pas un signal d'achat.",
-        "en": "{fired} scoring criteria fired ({strong} of them strong), but {pending} security check(s) still impossible: early detection, not a buy signal.",
-        "zh": "触发了 {fired} 项评分标准（其中 {strong} 项为强信号），但仍有 {pending} 项安全检查无法完成：这是早期检测，而非买入信号。",
+        "fr": "{fired} critères de scoring déclenchés, dont {strong} forts, mais {pending} vérification(s) de sécurité encore impossible(s) : c'est une détection précoce, pas un signal d'achat.",
+        "en": "{fired} scoring criteria fired, {strong} of them strong, but {pending} security check(s) still impossible: this is an early detection, not a buy signal.",
+        "zh": "触发了 {fired} 项评分标准，其中 {strong} 项为强信号，但仍有 {pending} 项安全检查无法完成：这是早期检测，而非买入信号。",
     },
     "track.signal": {
-        "fr": "Repéré par la passe SCOUT, puis confirmé par la passe MAIN (sécurité, liquidité, répartition des détenteurs) avant d'être publié comme signal validé.",
-        "en": "Picked up by the SCOUT pass, then confirmed by the MAIN pass (security, liquidity, holder distribution) before being published as a validated signal.",
-        "zh": "由 SCOUT 扫描发现，随后通过 MAIN 扫描（安全性、流动性、持有人分布）确认，才作为已验证信号发布。",
+        "fr": "Il a d'abord été repéré par notre passe SCOUT, puis confirmé par la passe MAIN (sécurité, liquidité, répartition des détenteurs) avant d'être publié comme signal validé.",
+        "en": "It was first picked up by our SCOUT pass, then confirmed by the MAIN pass (security, liquidity, holder distribution) before being published as a validated signal.",
+        "zh": "先由 SCOUT 扫描发现，随后经 MAIN 扫描（安全性、流动性、持有人分布）确认，才作为已验证信号发布。",
     },
     "track.watch": {
-        "fr": "Repéré par la passe SCOUT comme détection précoce ; la passe MAIN de vérification reste à faire — à traiter en surveillance uniquement.",
-        "en": "Picked up by the SCOUT pass as an early detection; the MAIN verification pass is still pending — treat as watch-only.",
-        "zh": "由 SCOUT 扫描作为早期检测发现；MAIN 验证扫描尚未完成——仅作观察。",
+        "fr": "Il a été repéré par notre passe SCOUT comme détection précoce, la passe MAIN de vérification reste à faire, donc à traiter en surveillance uniquement.",
+        "en": "It was picked up by our SCOUT pass as an early detection, the MAIN verification pass is still pending, so treat it as watch-only for now.",
+        "zh": "由 SCOUT 扫描作为早期检测发现，MAIN 验证扫描尚未完成，因此仅作观察。",
     },
     "peak.have": {
-        "fr": "Pic : capitalisation de ${peak_cap} atteinte le {peak_at}, soit {gain} (x{mult}) en {duration} après la détection.",
-        "en": "Peak: ${peak_cap} cap reached on {peak_at}, i.e. {gain} (x{mult}) in {duration} after detection.",
-        "zh": "峰值：市值于 {peak_at} 达到 ${peak_cap}，即检测后 {duration} 内 {gain}（x{mult}）。",
+        "fr": "Côté pic, la capitalisation a atteint ${peak_cap} le {peak_at}, soit {gain} (x{mult}) en {duration} après la détection.",
+        "en": "On the peak side, the cap reached ${peak_cap} on {peak_at}, that's {gain} (x{mult}) in {duration} after detection.",
+        "zh": "峰值方面，市值于 {peak_at} 达到 ${peak_cap}，也就是检测后 {duration} 内 {gain}（x{mult}）。",
     },
     "peak.none": {
-        "fr": "Pic : pas encore de relevé exploitable (token trop récent ou paire non indexée) — le sommet réel n'est pas connu.",
-        "en": "Peak: no usable reading yet (token too recent or pair not indexed) — the real high is unknown.",
-        "zh": "峰值：暂无可用数据（代币过新或交易对未被索引）——真实高点未知。",
+        "fr": "Côté pic, pas encore de relevé exploitable, le token est trop récent ou la paire n'est pas encore indexée, donc le sommet réel reste inconnu.",
+        "en": "On the peak side, no usable reading yet, the token is too recent or the pair isn't indexed yet, so the real high is unknown.",
+        "zh": "峰值方面，暂无可用数据，代币过新或交易对尚未被索引，真实高点尚不清楚。",
     },
     "peak.thin": {
-        "fr": "Pic : ${peak_cap} le {peak_at} ({gain}), mais sur {checks} relevé(s) seulement — le vrai sommet est probablement plus haut.",
-        "en": "Peak: ${peak_cap} on {peak_at} ({gain}), but on {checks} reading(s) only — the true high is likely higher.",
-        "zh": "峰值：{peak_at} 时 ${peak_cap}（{gain}），但仅有 {checks} 次采样——真实高点可能更高。",
+        "fr": "Côté pic, ${peak_cap} le {peak_at} ({gain}), mais sur {checks} relevé(s) seulement, donc le vrai sommet est probablement plus haut.",
+        "en": "On the peak side, ${peak_cap} on {peak_at} ({gain}), but based on only {checks} reading(s), so the true high is likely higher.",
+        "zh": "峰值方面，{peak_at} 时 ${peak_cap}（{gain}），但仅有 {checks} 次采样，真实高点可能更高。",
     },
     "smart.yes": {
-        "fr": "Activité smart money détectée sur ce token (indice {sm}/1.00).",
-        "en": "Smart-money activity detected on this token (score {sm}/1.00).",
-        "zh": "该代币检测到聪明钱活动（指数 {sm}/1.00）。",
+        "fr": "On a aussi détecté de l'activité smart money sur ce token (indice {sm}/1.00).",
+        "en": "We also detected smart-money activity on this token (score {sm}/1.00).",
+        "zh": "我们还检测到该代币有聪明钱活动（指数 {sm}/1.00）。",
     },
     "smart.no": {
-        "fr": "Aucun wallet smart money identifié sur ce token à la détection.",
-        "en": "No smart-money wallet identified on this token at detection.",
+        "fr": "Aucun wallet smart money identifié sur ce token au moment de la détection.",
+        "en": "No smart-money wallet identified on this token at the time of detection.",
         "zh": "检测时未发现该代币有聪明钱钱包。",
     },
     "rarity": {
-        "fr": "Rareté : environ 1 signal validé tous les {ratio} cycles de scan ({emitted} signaux sur {cycles} cycles).",
-        "en": "Rarity: roughly 1 validated signal per {ratio} scan cycles ({emitted} signals over {cycles} cycles).",
-        "zh": "稀有度：大约每 {ratio} 个扫描周期产生 1 个已验证信号（{cycles} 个周期内 {emitted} 个信号）。",
+        "fr": "Pour donner une idée de la rareté, on valide environ 1 signal tous les {ratio} cycles de scan ({emitted} signaux sur {cycles} cycles).",
+        "en": "To give you a sense of rarity, we validate roughly 1 signal every {ratio} scan cycles ({emitted} signals over {cycles} cycles).",
+        "zh": "关于稀有度，大约每 {ratio} 个扫描周期产生 1 个已验证信号（{cycles} 个周期内 {emitted} 个信号）。",
     },
     "cohort": {
-        "fr": "Cohorte : sur {count} signaux comparables (risque {risk}) suivis, le pic moyen est de {avg} et le meilleur {best}.",
-        "en": "Cohort: across {count} comparable signals (risk {risk}) tracked, the average peak is {avg} and the best {best}.",
-        "zh": "同类：在已跟踪的 {count} 个可比信号（风险 {risk}）中，平均峰值为 {avg}，最佳为 {best}。",
+        "fr": "En comparaison, sur {count} signaux du même genre (risque {risk}) qu'on a suivis, le pic moyen est de {avg} et le meilleur de {best}.",
+        "en": "For comparison, across {count} similar signals (risk {risk}) we've tracked, the average peak is {avg} and the best is {best}.",
+        "zh": "作为参考，在已跟踪的 {count} 个同类信号（风险 {risk}）中，平均峰值为 {avg}，最佳为 {best}。",
     },
-    "caveats.lead": {"fr": "À savoir : ", "en": "Caveats: ", "zh": "注意事项："},
+    "caveats.lead": {"fr": "Quelques précisions honnêtes : ", "en": "A few honest notes: ", "zh": "几点说明："},
     "cav.wallets": {
         "fr": "les montants d'achat/vente par wallet ne sont pas suivis",
         "en": "per-wallet buy/sell amounts are not tracked",
@@ -267,6 +276,11 @@ def build_recap(signal_id: int, lang: str = "fr", tz: str | None = None) -> str:
     )
 
     lines: list[str] = []
+
+    # 0. Accroche humaine, pour que le texte se lise comme un post plutôt
+    # qu'un rapport (demandé explicitement, avec des virgules à la place des
+    # tirets cadratins partout dans ce fichier).
+    lines.append(_tx("opener", lang))
 
     # 1. En-tête : ticker, chaîne, horodatage, cap d'entrée.
     lines.append(_tx(
