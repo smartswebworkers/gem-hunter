@@ -63,3 +63,6 @@ How to launch the bot:
  The bot will be launched
 
 Built for every Degen, Join the legends here: https://nsn.ai/GloriousKing225
+
+X: https://x.com/GloriousKing225
+Telegram: https://t.me/gemshunters_v1
