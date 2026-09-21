@@ -1670,3 +1670,29 @@ clauses de prudence honnêtes en fin de texte — seule la formulation change.
 vérifiée explicitement, accroche présente en tête, et les vérifications
 préexistantes (ticker, distinction VEILLE/SIGNAL, clause "not a buy signal")
 toujours vraies avec la nouvelle formulation.
+
+## Mise à jour 29 — Disclaimer « pas un conseil en investissement » dans toutes les alertes
+
+**Demandé par l'utilisateur.** En plus de la mention « UNVERIFIED — this is NOT
+a buy signal » (propre aux alertes de VEILLE), chaque alerte Telegram se
+termine désormais par un avertissement, **en anglais**, comme demandé :
+
+> ⚠️ Disclaimer: This is not financial advice. Signals are provided for
+> informational purposes only. Memecoin trading is highly risky, so do your own
+> research, take full responsibility for your own decisions, and only invest
+> what you can afford to lose.
+
+- Ajouté par une seule fonction (`_with_disclaimer` dans
+  `core/telegram_alerts.py`) appliquée aux DEUX gabarits, signal validé et
+  veille précoce, donc aucun chemin d'envoi ne peut l'oublier.
+- Toujours en anglais, y compris sous le gabarit français : un texte
+  d'avertissement unique et identique partout.
+- Placé tout en bas, après les liens (Axiom / Nansen / Binance Web3).
+
+Aucun filtre anti-rug, seuil ni règle de scoring touché : seul le texte de
+l'alerte change.
+
+229 tests, 0 échec (225 → 229) : présence dans la veille et le signal, position
+finale après les liens, contenu couvrant les cinq points demandés (pas un
+conseil, informatif, responsabilité, risque, perte acceptable), et une seule
+occurrence par alerte.

@@ -187,6 +187,20 @@ signal once every security check passes.
 # Repli affiché quand la liste correspondante est vide.
 _EMPTY_MISSING = {"fr": "- (non précisé)", "en": "- (not specified)"}
 
+# Avertissement ajouté à la fin de CHAQUE alerte (signal validé et veille), quelle
+# que soit la langue : volontairement en anglais uniquement, à la demande de
+# l'exploitant, pour un texte juridique unique et identique partout.
+DISCLAIMER = (
+    "⚠️ Disclaimer: This is not financial advice. Signals are provided for "
+    "informational purposes only. Memecoin trading is highly risky, so do your own "
+    "research, take full responsibility for your own decisions, and only invest "
+    "what you can afford to lose."
+)
+
+
+def _with_disclaimer(text: str) -> str:
+    return f"{text.rstrip()}\n\n{DISCLAIMER}"
+
 
 def _localize(items, lang: str) -> list[str]:
     """Traduit une liste de messages produits par le moteur vers `lang`."""
@@ -198,7 +212,7 @@ def format_watch_alert(signal: dict, lang: str) -> str:
     reasons = _localize(signal.get("reasons"), lang)
     missing = _localize(signal.get("missing_checks"), lang)
 
-    return template.format(
+    return _with_disclaimer(template.format(
         name=signal.get("name", "?"),
         ticker=signal.get("ticker", "?"),
         chain=signal.get("chain", "?"),
@@ -209,7 +223,7 @@ def format_watch_alert(signal: dict, lang: str) -> str:
         missing="\n".join(f"- {m}" for m in missing) or _EMPTY_MISSING.get(lang, _EMPTY_MISSING["en"]),
         reasons="\n".join(f"- {r}" for r in reasons[:6]) or "-",
         links=_build_links(signal),
-    )
+    ))
 
 
 def format_alert(signal: dict, lang: str) -> str:
@@ -223,7 +237,7 @@ def format_alert(signal: dict, lang: str) -> str:
     reasons = _localize(signal.get("reasons"), lang)
     risk_level = i18n.translate(signal.get("risk_level", "N/A"), lang)
 
-    return template.format(
+    return _with_disclaimer(template.format(
         name=signal.get("name", "?"),
         ticker=signal.get("ticker", "?"),
         chain=signal.get("chain", "?"),
@@ -240,7 +254,7 @@ def format_alert(signal: dict, lang: str) -> str:
         tp2=signal.get("tp2", "N/A"),
         tp3=signal.get("tp3", "N/A"),
         links=_build_links(signal),
-    )
+    ))
 
 
 def resolve_languages(languages: list[str] | None = None) -> list[str]:

@@ -585,6 +585,20 @@ signal_alert = format_alert({
 check("Stop Loss" in signal_alert and "NON VÉRIFIÉ" not in signal_alert,
       "L'alerte de signal validé garde bien son plan d'entrée complet")
 
+# Avertissement « pas un conseil en investissement » : en anglais, en bas de
+# CHAQUE alerte (veille + signal, toutes langues), après les liens.
+from core.telegram_alerts import DISCLAIMER
+check(DISCLAIMER in watch_alert and DISCLAIMER in signal_alert,
+      "Le disclaimer (anglais) figure dans l'alerte de veille ET dans l'alerte de signal")
+check(watch_alert.rstrip().endswith(DISCLAIMER) and signal_alert.rstrip().endswith(DISCLAIMER),
+      "Le disclaimer est le tout dernier bloc de l'alerte (après les liens)")
+check("not financial advice" in DISCLAIMER and "informational purposes" in DISCLAIMER
+      and "afford to lose" in DISCLAIMER and "responsibility" in DISCLAIMER,
+      "Le disclaimer couvre : pas un conseil, informatif, responsabilité, risque, perte acceptable")
+check(format_alert({"chain": "solana", "contract": "X", "tier": config.TIER_WATCH, "verified": False},
+                   "en").count(DISCLAIMER) == 1,
+      "Le disclaimer n'apparaît qu'une seule fois par alerte")
+
 # Liens d'affiliation Nansen + Binance Web3 dans les alertes Telegram.
 from core.telegram_alerts import _build_links
 _lk_bsc = _build_links({"chain": "bsc", "contract": "0xABC"})
