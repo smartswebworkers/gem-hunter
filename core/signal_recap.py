@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import config as cfg
+from core.telegram_alerts import DISCLAIMER
 from storage import db
 
 SUPPORTED_LANGS = ("fr", "en", "zh")
@@ -390,5 +391,10 @@ def build_recap(signal_id: int, lang: str = "fr", tz: str | None = None) -> str:
     sep = "；" if lang == "zh" else "; "
     tail = "。" if lang == "zh" else "."
     lines.append(_tx("caveats.lead", lang) + sep.join(caveats) + tail)
+
+    # 10. Avertissement « pas un conseil en investissement » : même texte
+    # anglais que dans les alertes Telegram (source unique), quelle que soit la
+    # langue du récap, puisque ce texte est destiné à être publié tel quel.
+    lines.append(DISCLAIMER)
 
     return "\n\n".join(lines)

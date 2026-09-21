@@ -1688,6 +1688,8 @@ check("—" not in _fr and "—" not in _en and "—" not in _zh,
       "build_recap : plus aucun tiret cadratin dans le texte genere (virgules a la place)")
 check(_fr.startswith(_recap._TX["opener"]["fr"]),
       "build_recap : accroche humaine en tete du texte")
+check(all(t.rstrip().endswith(DISCLAIMER) and t.count(DISCLAIMER) == 1 for t in (_fr, _en, _zh)),
+      "build_recap : le disclaimer (anglais) termine le texte, une seule fois, dans les 3 langues")
 check("400%" in _fr,
       "build_recap : le pic suivi (+400%) apparait dans le texte")
 check(_recap.build_recap(999_999, "fr") == "",

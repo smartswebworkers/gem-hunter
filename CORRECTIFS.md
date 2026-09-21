@@ -1696,3 +1696,18 @@ l'alerte change.
 finale après les liens, contenu couvrant les cinq points demandés (pas un
 conseil, informatif, responsabilité, risque, perte acceptable), et une seule
 occurrence par alerte.
+
+## Mise à jour 30 — Même disclaimer sur le récap réseaux sociaux
+
+**Demandé par l'utilisateur** (suite de la mise à jour 29). Le texte produit par
+`core/signal_recap.py`, destiné à être publié tel quel, se termine désormais par
+le même avertissement anglais que les alertes Telegram. Le texte n'est écrit
+qu'à un seul endroit (`DISCLAIMER` dans `core/telegram_alerts.py`, importé par
+le récap), donc les deux ne peuvent pas diverger. Il est ajouté en dernier
+bloc, après les « précisions honnêtes », dans les trois langues du récap
+(fr/en/zh), toujours en anglais.
+
+Aucune donnée, aucun filtre ni seuil touché.
+
+230 tests, 0 échec (229 → 230) : le disclaimer termine le texte, une seule fois,
+en fr/en/zh.
