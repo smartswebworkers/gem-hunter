@@ -617,6 +617,13 @@ check("app.nansen.ai" in _lk_rh and "chain=robinhood" in _lk_rh
       and "web3.binance.com" not in _lk_rh,
       "Telegram : Robinhood a le lien Nansen mais PAS Binance Web3 (chaine non listee)",
       f"-> {_lk_rh!r}")
+_lk_arc = _build_links({"chain": "arc", "contract": "0xARC"})
+check("axiom.trade/t/0xARC/@hunter212?chain=arc" in _lk_arc
+      and "app.nansen.ai/token-god-mode?tokenAddress=0xARC&chain=arc" in _lk_arc
+      and "web3.binance.com" not in _lk_arc,
+      "Telegram : Arc a les liens Axiom + Nansen (couverture confirmee) mais PAS "
+      "Binance Web3 (aucune couverture confirmee pour Arc Network)",
+      f"-> {_lk_arc!r}")
 check("0xABC" in _build_links({"chain": "base", "contract": "0xABC"})
       and _build_links({"chain": "bsc", "contract": ""}) == "",
       "Telegram : Base couverte ; contrat vide => aucun lien")
@@ -1538,16 +1545,17 @@ try:
           "robinhood._probe : découverte via Nansen seul => chaîne active en VEILLE",
           f"-> {_st['detail']}")
 
-    # Arc Network (Circle, chain ID 5042) : câblée comme Robinhood, mais SANS
-    # entrée Nansen (aucune couverture confirmée à son lancement) — vérifié
-    # explicitement en négatif.
+    # Arc Network (Circle, chain ID 5042) : câblée comme Robinhood. La
+    # couverture Nansen, confirmée en direct le 23/09/2026 (screener ET
+    # smart-money holders renvoient de vrais résultats sur Arc), est
+    # maintenant câblée elle aussi — au même titre que Base/BSC/Ethereum/Solana.
     from chains import arc as _arc
     check("arc" in config.ACTIVE_CHAINS and "arc" in _CM
           and config.GOPLUS_CHAIN_IDS.get("arc") == "5042"
-          and not nansen.supports_chain("arc")
-          and not nansen.screener_supports_chain("arc"),
+          and nansen.supports_chain("arc")
+          and nansen.screener_supports_chain("arc"),
           "Arc : chaîne active + module câblés, chain ID GoPlus correct, "
-          "aucune couverture Nansen supposée")
+          "couverture Nansen (screener + smart money) confirmée")
 
     _arc_orig = (geckoterminal.resolve_network, dexscreener.resolve_chain_id,
                  _arc.goplus.get_supported_chains, _arc.goplus.supports_chain)

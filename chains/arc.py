@@ -23,13 +23,18 @@ comme Robinhood Chain :
   2. DexScreener indexe-t-il la chaîne ?    (prix, volumes, âge des paires)
   3. GoPlus couvre-t-il le chain ID 5042 ?  (sécurité du contrat)
 
-Nansen n'est volontairement pas sollicité ici (ni NANSEN_CHAIN_MAP, ni
-NANSEN_SCREENER_CHAIN_MAP) : aucune indication que Nansen couvre déjà cette
-chaîne à son lancement, et un mapping suggéré sans confirmation risquerait de
-la déclarer couverte à tort. Elle sera ajoutée si et quand cette couverture
-est confirmée. En attendant, la découverte ne dépend que de GeckoTerminal et
-DexScreener — si aucun des deux n'indexe encore Arc, la chaîne reste inactive
-sans jamais consommer de créneau de scan pour rien.
+MISE À JOUR DU 23/09/2026 — Nansen couvre désormais Arc, confirmé en direct
+(pas supposé) : /token-screener et /tgm/holders renvoient tous deux de vrais
+tokens et détenteurs Smart Money labellisés sur Arc (ex. ARGUS, chain ID 5042).
+Le mapping a donc été ajouté à NANSEN_CHAIN_MAP et NANSEN_SCREENER_CHAIN_MAP
+(data_sources/nansen.py), ce qui active automatiquement l'exigence
+« smart money requis » (REQUIRE_SMART_MONEY, mode « quality ») sur Arc au même
+titre que Solana/BSC/Base/Ethereum — un renforcement, jamais un relâchement,
+de la sécurité. GeckoTerminal, DexScreener et GoPlus couvrent également déjà
+la chaîne à cette date : la découverte ne dépend donc plus uniquement d'eux
+deux, mais _probe() ci-dessous ne teste toujours que ces trois-là, puisqu'ils
+suffisent seuls à activer la chaîne (voir chains/robinhood.py pour le cas où
+un module a besoin du screener Nansen comme voie de découverte de secours).
 """
 import logging
 import time

@@ -40,25 +40,36 @@ NANSEN_REF = "GloriousKing225"
 BINANCE_WEB3_REF = "L3C8VW3Q"
 
 # Mapping de nos noms de chaîne internes vers le code chaîne attendu par Axiom
+# "arc" ajouté le 23/09/2026 : Axiom liste désormais Arc Network parmi ses
+# chaînes supportées (Solana, BNB Chain, Ethereum, Base, HyperEVM, Robinhood,
+# Ink, Arc), au même titre que les autres chaînes ci-dessous.
 AXIOM_CHAIN_MAP = {
     "solana": "sol",
     "bsc": "bnb",
     "ethereum": "eth",
     "robinhood": "robinhood",
+    "arc": "arc",
 }
 
 # Nansen Token God Mode : le paramètre `chain` attend le code de l'API Nansen
 # (BNB Chain = "bnb"). Aligné sur data_sources/nansen.NANSEN_SCREENER_CHAIN_MAP.
+# "arc" ajouté le 23/09/2026, confirmé en direct via l'API Nansen (voir
+# data_sources/nansen.NANSEN_CHAIN_MAP).
 NANSEN_LINK_CHAIN_MAP = {
     "solana": "solana",
     "bsc": "bnb",
     "base": "base",
     "ethereum": "ethereum",
     "robinhood": "robinhood",
+    "arc": "arc",
 }
 
 # Binance Web3 : pages /en/token/<chaîne>/<contrat>. Robinhood Chain n'y est
 # pas listée — on n'ajoute alors pas le lien plutôt que d'en produire un mort.
+# Arc Network (Circle, chain ID 5042) non plus : aucune source ne confirme que
+# Binance Web3 y ouvre une page token. « ARC-20 » que Binance a intégré est un
+# standard de tokens Bitcoin (Atomicals Protocol) sans aucun rapport avec Arc
+# Network — une fausse piste à ne pas confondre.
 BINANCE_WEB3_CHAIN_MAP = {
     "solana": "solana",
     "bsc": "bsc",

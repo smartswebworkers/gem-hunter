@@ -1711,3 +1711,37 @@ Aucune donnée, aucun filtre ni seuil touché.
 
 230 tests, 0 échec (229 → 230) : le disclaimer termine le texte, une seule fois,
 en fr/en/zh.
+
+## Mise à jour 31 — Liens Axiom + Nansen dans les alertes Telegram pour Arc Network
+
+**Signalé par l'utilisateur** : aucun lien (Axiom, Nansen, Binance Web3) n'apparaissait
+dans les alertes Telegram pour un memecoin sur Arc Network. Cause : Arc avait été
+ajoutée au scanner (Mise à jour 27) sans couverture Nansen confirmée à l'époque —
+`core/telegram_alerts.py` n'avait donc aucune entrée « arc » dans ses cartes de
+liens, et `data_sources/nansen.py` non plus.
+
+**Vérifié en direct avant tout changement, comme pour chaque chaîne de ce bot** :
+
+- **Nansen** : appel réel à `/token-screener` et `/tgm/holders` sur la chaîne
+  `arc` → renvoie de vrais tokens (CIRBTC, ARGUS, WETH...) et de vrais détenteurs
+  Smart Money labellisés. Couverture confirmée, pas supposée. Ajouté à
+  `NANSEN_CHAIN_MAP` et `NANSEN_SCREENER_CHAIN_MAP` (`data_sources/nansen.py`)
+  et à `NANSEN_LINK_CHAIN_MAP` (`core/telegram_alerts.py`).
+- **Axiom** : Axiom liste désormais Arc Network parmi ses chaînes supportées
+  (Solana, BNB Chain, Ethereum, Base, HyperEVM, Robinhood, Ink, Arc). Ajouté à
+  `AXIOM_CHAIN_MAP`.
+- **Binance Web3** : PAS ajouté. Aucune source ne confirme une page token pour
+  Arc Network (Circle, chain ID 5042). Ce que Binance appelle « ARC-20 » est un
+  standard de tokens Bitcoin (Atomicals Protocol) totalement différent — une
+  fausse piste identifiée et écartée plutôt que de produire un lien mort ou trompeur.
+
+**Effet de bord positif, documenté explicitement pour rester transparent** : en
+confirmant la couverture Nansen sur Arc, l'exigence « smart money requis »
+(`REQUIRE_SMART_MONEY`, mode « quality ») s'applique désormais à Arc au même
+titre que Solana/BSC/Base/Ethereum. C'est un **renforcement** de la sécurité
+(un critère de vérification en plus avant un SIGNAL validé), jamais un
+relâchement.
+
+231 tests, 0 échec (230 → 231) : liens Axiom + Nansen présents pour Arc, lien
+Binance Web3 absent pour Arc, couverture Nansen (screener + smart money)
+confirmée dans les tests de câblage de la chaîne.

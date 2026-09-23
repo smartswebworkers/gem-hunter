@@ -30,11 +30,15 @@ logger = logging.getLogger("gem_hunter.nansen")
 BASE_URL = "https://api.nansen.ai/api/v1"
 
 # Nansen nomme la BNB Smart Chain "bnb" (pas "bsc")
+# "arc" (Arc Network, Circle) ajouté le 23/09/2026 après vérification en direct :
+# /tgm/holders renvoie de vrais détenteurs Smart Money labellisés sur un token
+# Arc réel (ex. ARGUS), donc la couverture est confirmée, pas supposée.
 NANSEN_CHAIN_MAP = {
     "solana": "solana",
     "bsc": "bnb",
     "ethereum": "ethereum",
     "base": "base",
+    "arc": "arc",
 }
 
 # Chaînes couvertes par le Token Screener Nansen (découverte). C'est une carte
@@ -50,6 +54,9 @@ NANSEN_SCREENER_CHAIN_MAP = {
     "ethereum": "ethereum",
     "base": "base",
     "robinhood": "robinhood",
+    # Confirmé en direct le 23/09/2026 : /token-screener renvoie de vrais
+    # tokens Arc (liquidité, volume, âge réels), pas une liste vide.
+    "arc": "arc",
 }
 _SCREENER_URL = f"{BASE_URL}/token-screener"
 
