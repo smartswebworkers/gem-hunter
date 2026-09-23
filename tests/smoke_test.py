@@ -565,6 +565,35 @@ check(watch_rows[0]["verified"] is False, "Le drapeau verified est bien persist�
 check(db.has_recent_signal("solana", "WATCHMINT", tier=config.TIER_SIGNAL) is False,
       "Un token en veille reste candidat à la promotion en signal (pas bloqué par le dédoublonnage)")
 
+# CORRECTIF — l'âge réel du token (pair_created_at, epoch ms) doit survivre à
+# l'aller-retour en base, sinon l'interface n'a que created_at (l'heure de NOTRE
+# détection) pour afficher un âge, ce qui a fait apparaître un token de 20+ min
+# comme vieux de 2 min à l'écran (confondu avec created_at).
+_pair_ms_test = time.time() * 1000 - 27 * 60_000   # 27 min avant maintenant
+_age_persist_id = db.insert_signal({
+    "chain": "bsc", "contract": "0xAGEPERSIST", "ticker": "AGEP",
+    "score": 70, "tier": config.TIER_WATCH, "verified": False,
+    "missing_checks": [], "features": {}, "pair_created_at": _pair_ms_test,
+})
+_age_persist_row = db.get_signal(_age_persist_id)
+check(_age_persist_row is not None and _age_persist_row.get("pair_created_at") == _pair_ms_test,
+      "pair_created_at (âge réel du token) est bien persisté et relu depuis la base",
+      f"-> {_age_persist_row.get('pair_created_at') if _age_persist_row else None}")
+check(any(r["contract"] == "0xAGEPERSIST" and r.get("pair_created_at") == _pair_ms_test
+          for r in db.get_active_signals(tier=config.TIER_WATCH)),
+      "pair_created_at est aussi présent dans get_active_signals (liste chargée au démarrage de l'interface)")
+
+# Absence de pair_created_at (ex. bonding curve sans pool) : la colonne reste
+# NULL plutôt que de fabriquer une valeur — l'interface sait alors qu'elle doit
+# afficher « âge non confirmé » plutôt qu'un faux âge précis.
+_no_pair_id = db.insert_signal({
+    "chain": "solana", "contract": "0xNOPAIRAGE", "ticker": "NOPAIR",
+    "score": 40, "tier": config.TIER_WATCH, "verified": False,
+    "missing_checks": [], "features": {},
+})
+check(db.get_signal(_no_pair_id).get("pair_created_at") is None,
+      "Sans pair_created_at fourni, la colonne reste NULL (pas de faux âge inventé)")
+
 from core.telegram_alerts import format_alert
 watch_alert = format_alert({
     "chain": "solana", "contract": "WATCHMINT", "ticker": "WATCH", "name": "Watch",

@@ -1778,3 +1778,47 @@ invalides neutralisées, âge inconnu toujours laissé passer, un token hors
 filtre n'est ni affiché ni envoyé sur Telegram (VEILLE et SIGNAL) mais reste
 suivi pour une promotion ultérieure, un token dans la fenêtre reste affiché
 normalement.
+
+## Mise à jour 33 — L'âge affiché était celui de notre détection, pas l'âge réel du token
+
+**Signalé par l'utilisateur** : le dashboard et Telegram affichaient « 2 min », « 4 min »
+sur des cartes dont le token avait en réalité déjà 20+ minutes sur un explorateur
+(DexScreener, BscScan...). L'utilisateur a ensuite précisé : « je veux des temps
+exactes, pas de décalage ».
+
+**Cause réelle, à deux niveaux :**
+
+1. Le badge d'âge de chaque carte (`gui/web/index.html`) était calculé depuis
+   `created_at` — l'instant où NOTRE bot a enregistré ce candidat en base — et
+   non depuis `pair_created_at`, l'instant réel de création de la pool/paire
+   sur la chaîne. Un token qui attend son tour dans la file d'enrichissement
+   (plusieurs cycles de scan) peut très bien avoir déjà 20+ minutes réelles au
+   moment où le bot l'alerte enfin : l'écran affichait alors l'âge de notre
+   alerte, pas celui du token.
+2. **Plus grave** : la table `signals` (`storage/db.py`) ne stockait `pair_created_at`
+   nulle part. Même en corrigeant l'interface, l'information réelle disparaissait
+   dès qu'un signal passait par la base (rechargement de l'appli, liste au
+   démarrage) — elle n'était disponible que sur une carte fraîchement reçue en
+   direct, avant tout passage en base.
+
+**Corrigé :**
+
+- `storage/db.py` : nouvelle colonne `pair_created_at` (migration non
+  destructive, s'applique automatiquement au prochain lancement), persistée
+  par `insert_signal()` et relue par `get_active_signals()`/`get_signal()`.
+- `gui/web/index.html` : le badge d'âge de chaque carte utilise désormais
+  `pair_created_at` (âge réel) en priorité, avec l'heure exacte affichée au
+  survol (infobulle), pour vérification directe contre un explorateur — c'est
+  la demande explicite de temps exact, sans décalage. Quand aucune pool n'est
+  encore indexée (bonding curve), le badge se distingue clairement (préfixe
+  « ~ » + infobulle « âge réel inconnu ») au lieu de faire croire à un âge
+  vérifié. La fiche détaillée (clic sur une carte) affiche maintenant DEUX
+  lignes distinctes : « Détecté le » (notre heure, inchangée) ET « Âge réel du
+  token » (heure exacte + âge, ou mention explicite si inconnu).
+- Le filtre d'âge ajouté en Mise à jour 32 utilisait déjà `pair_created_at` et
+  n'était donc pas affecté par ce bug d'affichage — seul le badge visuel
+  l'était.
+
+247 tests, 0 échec (244 → 247) : `pair_created_at` survit à l'aller-retour en
+base (insert + relecture directe + liste `get_active_signals`), et reste
+`NULL` (jamais inventé) quand la donnée n'existe pas.

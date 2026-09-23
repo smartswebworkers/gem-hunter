@@ -460,6 +460,18 @@ const I18N = {
   "time.minShort": { fr: " min", en: " min", zh: "分钟" },
   "time.hourShort": { fr: "h", en: "h", zh: "小时" },
   "time.dayShort": { fr: " j", en: "d", zh: "天" },
+  "time.pairCreatedAt": { fr: "Pool/paire créée le", en: "Pool/pair created at", zh: "资金池/交易对创建于" },
+  "time.detectionOnly": {
+    fr: "Âge réel inconnu (aucune pool indexée pour l'instant) — détecté par le bot le",
+    en: "Real age unknown (no indexed pool yet) — detected by the bot at",
+    zh: "真实年龄未知（尚无已索引的资金池）——机器人检测于",
+  },
+  "modal.realAge": { fr: "Âge réel du token", en: "Real token age", zh: "代币真实年龄" },
+  "modal.realAgeUnknown": {
+    fr: "Âge réel non confirmé — aucune pool indexée pour l'instant (le token peut déjà être plus vieux que l'heure de détection ci-dessus)",
+    en: "Real age not confirmed — no indexed pool yet (the token may already be older than the detection time above)",
+    zh: "真实年龄尚未确认——目前没有已索引的资金池（代币的实际年龄可能比上面的检测时间更早）",
+  },
   "modal.detected": { fr: "Détecté", en: "Detected", zh: "检测时间" },
   "modal.risk": { fr: "risque", en: "risk", zh: "风险" },
   "modal.watchTitle": { fr: "DÉTECTION PRÉCOCE — NON VÉRIFIÉE.", en: "EARLY DETECTION — UNVERIFIED.", zh: "早期检测 — 尚未验证。" },
@@ -621,17 +633,35 @@ function riskClass(level){
   return "risk-high";
 }
 
+// Âge RÉEL du token/de la pool (pair_created_at, epoch MILLISECONDES — même
+// convention que core/scanner._passes_age_filter), pas l'heure à laquelle NOUS
+// l'avons détecté (created_at) : un token peut rester en file d'enrichissement
+// plusieurs cycles avant que le bot ne l'alerte, et afficher created_at faisait
+// croire qu'un token de 20+ minutes venait de naître. exact=false uniquement
+// quand aucune pool n'est encore indexée (bonding curve) : on retombe alors sur
+// l'heure de détection, mais en le disant explicitement (badge « ~ », infobulle
+// dédiée) au lieu de le présenter comme un âge vérifié.
+function tokenAgeInfo(sig){
+  const pairMs = Number(sig && sig.pair_created_at);
+  if(pairMs) return { epochMs: pairMs, exact: true };
+  const createdS = Number(sig && sig.created_at);
+  return { epochMs: (createdS || Date.now() / 1000) * 1000, exact: false };
+}
+
 function renderCard(sig){
   const el = document.createElement("div");
   const isWatch = (sig.tier === "veille") || (sig.verified === false);
   el.className = "card " + (isWatch ? "tier-watch" : riskClass(sig.risk_level));
   el.dataset.chain = sig.chain;
   el.dataset.id = sig.id;
+  const ageInfo = tokenAgeInfo(sig);
+  const ageExactDate = new Date(ageInfo.epochMs).toLocaleString(LOCALE_MAP[currentLang]);
+  const ageTooltip = (ageInfo.exact ? t("time.pairCreatedAt") : t("time.detectionOnly")) + " " + ageExactDate;
   el.innerHTML = `
     <button class="card-delete" title="${escapeHtml(t("card.delete"))}">✕</button>
     <div class="card-top">
       <span class="card-chain">${escapeHtml((sig.chain||"?").toUpperCase())}</span>
-      <span class="card-age" data-created="${sig.created_at || (Date.now()/1000)}">${escapeHtml(t("time.justNow"))}</span>
+      <span class="card-age" data-epoch="${ageInfo.epochMs}" data-exact="${ageInfo.exact ? 1 : 0}" title="${escapeHtml(ageTooltip)}">${escapeHtml(t("time.justNow"))}</span>
     </div>
     <div class="card-ticker">${escapeHtml(sig.ticker || "?")}<span class="tier-badge ${isWatch?"watch":"signal"}">${escapeHtml(isWatch?t("badge.watch"):t("badge.verified"))}</span></div>
     <div class="card-score">${fmtScore(sig.score)}</div>
@@ -705,6 +735,7 @@ function addSignal(sig){
   grid.insertBefore(el, grid.firstChild);
   cards.set(sig.id, el);
   applyFilter();
+  refreshAllAges();   // âge exact dès l'affichage, pas seulement au prochain tick des 15s
 }
 
 function reconcileCardsWithFilters(){
@@ -727,6 +758,7 @@ function reconcileCardsWithFilters(){
     }
   }
   applyFilter();
+  refreshAllAges();
 }
 
 function loadWeights(weights){
@@ -753,8 +785,11 @@ function logLine(text, level){
   while(panel.children.length > 60) panel.removeChild(panel.lastChild);
 }
 
-function formatAge(createdAtSeconds){
-  const diffSec = Math.max(0, (Date.now()/1000) - createdAtSeconds);
+// `epochMs` : instant de référence en epoch MILLISECONDES (Date.now() est déjà
+// en ms — plus de conversion secondes/millisecondes à faire au point d'appel,
+// source des décalages précédents).
+function formatAge(epochMs){
+  const diffSec = Math.max(0, (Date.now() - epochMs) / 1000);
   if(diffSec < 60) return t("time.justNow");
   if(diffSec < 3600) return Math.floor(diffSec/60) + t("time.minShort");
   if(diffSec < 86400) {
@@ -767,8 +802,10 @@ function formatAge(createdAtSeconds){
 
 function refreshAllAges(){
   document.querySelectorAll(".card-age").forEach(el => {
-    const created = parseFloat(el.dataset.created);
-    if(!isNaN(created)) el.textContent = formatAge(created);
+    const epoch = parseFloat(el.dataset.epoch);
+    if(isNaN(epoch)) return;
+    const prefix = el.dataset.exact === "0" ? "~" : "";  // âge non confirmé (pas de pool indexée)
+    el.textContent = prefix + formatAge(epoch);
   });
 }
 setInterval(refreshAllAges, 15000);  // rafraîchit toutes les 15s, pas besoin de plus fréquent
@@ -830,7 +867,12 @@ function openModal(id){
       <div>
         <div class="modal-ticker">${escapeHtml(sig.ticker || "?")}</div>
         <div class="modal-name">${escapeHtml(sig.name || "")} — ${escapeHtml((sig.chain||"?").toUpperCase())}</div>
-        <div class="modal-name" style="margin-top:-10px;">${escapeHtml(t("modal.detected"))} ${sig.created_at ? new Date(sig.created_at*1000).toLocaleString(LOCALE_MAP[currentLang]) : "?"} (${formatAge(sig.created_at || Date.now()/1000)})</div>
+        <div class="modal-name" style="margin-top:-10px;">${escapeHtml(t("modal.detected"))} ${sig.created_at ? new Date(sig.created_at*1000).toLocaleString(LOCALE_MAP[currentLang]) : "?"} (${formatAge(sig.created_at ? sig.created_at*1000 : Date.now())})</div>
+        <div class="modal-name" style="margin-top:-10px;">${
+          sig.pair_created_at
+            ? escapeHtml(t("modal.realAge")) + " : " + escapeHtml(new Date(sig.pair_created_at).toLocaleString(LOCALE_MAP[currentLang])) + " (" + formatAge(sig.pair_created_at) + ")"
+            : escapeHtml(t("modal.realAgeUnknown"))
+        }</div>
       </div>
       <button class="modal-close" id="modalCloseBtn">✕</button>
     </div>

@@ -78,6 +78,17 @@ MIGRATIONS = [
     ("signals", "peak_return_pct", "REAL"),
     ("signals", "peak_at", "REAL"),
     ("signals", "peak_checks", "INTEGER DEFAULT 0"),
+    # CORRECTIF — l'âge affiché (carte + fiche détail) confondait deux notions :
+    # `created_at` (quand NOUS avons détecté/enregistré ce candidat) et l'âge
+    # RÉEL du token/de la pool sur la chaîne. La table ne stockait que la
+    # première ; un token détecté avec du retard (backlog de scan, plusieurs
+    # cycles avant qu'il n'atteigne le sommet de la file d'enrichissement)
+    # affichait donc « 2 min » alors qu'il avait déjà 20+ minutes sur un
+    # explorateur. `pair_created_at` (epoch MILLISECONDES, même convention que
+    # partout ailleurs dans le code — voir core/scanner._passes_age_filter)
+    # est désormais persisté pour que l'interface affiche l'âge réel, pas
+    # celui de notre propre détection.
+    ("signals", "pair_created_at", "REAL"),
 ]
 
 
@@ -120,8 +131,8 @@ def insert_signal(signal: dict) -> int:
             """INSERT OR IGNORE INTO signals
             (chain, contract, ticker, name, market_cap, liquidity, holders,
              score, reasons, features, risk_level, entry_price, stop_loss, tp1, tp2, tp3,
-             status, created_at, tier, verified, vetoes, missing_checks)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             status, created_at, tier, verified, vetoes, missing_checks, pair_created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 signal["chain"], signal["contract"], signal.get("ticker"),
                 signal.get("name"), signal.get("market_cap"), signal.get("liquidity"),
@@ -135,6 +146,7 @@ def insert_signal(signal: dict) -> int:
                 1 if signal.get("verified", True) else 0,
                 json.dumps(signal.get("vetoes", []), ensure_ascii=False),
                 json.dumps(signal.get("missing_checks", []), ensure_ascii=False),
+                signal.get("pair_created_at"),
             ),
         )
         return cur.lastrowid
