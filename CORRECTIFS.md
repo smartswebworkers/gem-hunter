@@ -1745,3 +1745,36 @@ relâchement.
 231 tests, 0 échec (230 → 231) : liens Axiom + Nansen présents pour Arc, lien
 Binance Web3 absent pour Arc, couverture Nansen (screener + smart money)
 confirmée dans les tests de câblage de la chaîne.
+
+## Mise à jour 32 — Filtre d'affichage/alerte par âge du token (boutons 1/5/10/15/30 min, 1h)
+
+**Demandé par l'utilisateur** : des boutons pour sélectionner les alertes par âge du
+token, « comme un filtre ». Ajouté sur le même modèle que le curseur SCORE MIN
+déjà existant, à côté du sélecteur de chaîne dans l'interface.
+
+- **Boutons** : TOUT (défaut, aucun filtre), 1MN, 5MN, 10MN, 15MN, 30MN, 1H —
+  sélection exclusive (un seul actif à la fois), contrairement aux puces de
+  chaîne qui se cumulent.
+- **C'est un filtre d'AFFICHAGE/ALERTE, pas un seuil de sécurité.** Un token
+  plus vieux que le filtre choisi continue d'être scanné, vérifié par le moteur
+  anti-rug, suivi en file de promotion, et peut toujours devenir un SIGNAL en
+  base — il est seulement absent du dashboard et des alertes Telegram tant
+  qu'il ne rentre pas dans la fenêtre. `MIN_PAIR_AGE_MINUTES` (qui définit ce
+  qui PEUT devenir un SIGNAL vérifié) n'est pas touché : aucun assouplissement
+  de sécurité, uniquement un filtre de confort.
+- **Âge inconnu = laissé passer**, jamais cité comme hors fenêtre par
+  supposition (même règle que le reste du moteur : absence de donnée n'est
+  jamais traitée comme une donnée négative).
+- **Câblage** : `core/scanner.py` (`ScannerState.max_alert_age_minutes`,
+  `Scanner.set_max_alert_age`, `Scanner._passes_age_filter`, appliqué juste
+  avant publication d'un SIGNAL ou d'une VEILLE) → `gui/bridge.py`
+  (`setMaxAlertAge`/`getMaxAlertAge`) → `gui/web/index.html` (boutons
+  `#ageToggles`, filtre réappliqué en direct aux cartes déjà affichées via
+  `reconcileCardsWithFilters`, généralisation de l'ancien
+  `reconcileCardsWithScore`).
+
+244 tests, 0 échec (231 → 244) : filtre désactivé par défaut, valeurs
+invalides neutralisées, âge inconnu toujours laissé passer, un token hors
+filtre n'est ni affiché ni envoyé sur Telegram (VEILLE et SIGNAL) mais reste
+suivi pour une promotion ultérieure, un token dans la fenêtre reste affiché
+normalement.

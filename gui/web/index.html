@@ -301,6 +301,17 @@ input[type=range]::-webkit-slider-thumb{
           <button type="button" class="cmd-btn chain-chip active" data-chain="arc">ARC</button>
         </div>
       </div>
+      <div><label data-i18n="filter.age">ÂGE DU TOKEN</label>
+        <div id="ageToggles" style="display:inline-flex;gap:6px;flex-wrap:wrap;vertical-align:middle">
+          <button type="button" class="cmd-btn age-chip active" data-age="0" data-i18n="age.all">TOUT</button>
+          <button type="button" class="cmd-btn age-chip" data-age="1">1MN</button>
+          <button type="button" class="cmd-btn age-chip" data-age="5">5MN</button>
+          <button type="button" class="cmd-btn age-chip" data-age="10">10MN</button>
+          <button type="button" class="cmd-btn age-chip" data-age="15">15MN</button>
+          <button type="button" class="cmd-btn age-chip" data-age="30">30MN</button>
+          <button type="button" class="cmd-btn age-chip" data-age="60">1H</button>
+        </div>
+      </div>
       <div class="slider-wrap">
         <label data-i18n="filter.scoremin">SCORE MIN</label>
         <input type="range" id="scoreSlider" min="30" max="100" value="80" autocomplete="off">
@@ -374,6 +385,11 @@ const signalData = new Map();
 // chaîne décochée n'est plus scannée du tout : ni carte, ni alerte Telegram.
 let alertChains = new Set(["solana", "bsc", "base", "robinhood", "arc"]);
 let minScore = 80;
+// Filtre d'affichage/alerte par âge du token (boutons TOUT/1MN/5MN/.../1H).
+// 0 = pas de filtre (TOUT). N'affecte QUE l'affichage et les alertes Telegram
+// (bridge.setMaxAlertAge -> scanner.set_max_alert_age), jamais le scan, le
+// scoring ou les seuils de sécurité.
+let maxAlertAge = 0;
 
 // =============================================================================
 // i18n — dashboard trilingue (FR / EN / 中文)
@@ -414,6 +430,8 @@ const I18N = {
   "mode.aggressive": { fr: "MODE: AGGRESSIVE", en: "MODE: AGGRESSIVE", zh: "模式：AGGRESSIVE" },
   "panel.signals": { fr: "SIGNAUX DÉTECTÉS", en: "DETECTED SIGNALS", zh: "已检测信号" },
   "filter.chain": { fr: "CHAÎNE", en: "CHAIN", zh: "链" },
+  "filter.age": { fr: "ÂGE DU TOKEN", en: "TOKEN AGE", zh: "代币年龄" },
+  "age.all": { fr: "TOUT", en: "ALL", zh: "全部" },
   "filter.scoremin": { fr: "SCORE MIN", en: "MIN SCORE", zh: "最低分数" },
   "chain.all": { fr: "Toutes", en: "All", zh: "全部" },
   "btn.clearall": { fr: "Effacer tout", en: "Clear all", zh: "清空全部" },
@@ -662,10 +680,26 @@ function passesScore(sig){
   return (Number(sig && sig.score) || 0) >= minScore;
 }
 
+// Filtre ÂGE DU TOKEN : TOUT (0) n'exclut rien. Un âge inconnu (pas encore de
+// pair_created_at, cas fréquent pour une création pump.fun tout juste vue par
+// le flux temps réel) est laissé passer plutôt que caché — même règle que côté
+// backend (core/scanner.py : _passes_age_filter).
+function passesAge(sig){
+  if(!maxAlertAge) return true;
+  const created = Number(sig && sig.pair_created_at);
+  if(!created) return true;
+  const ageMin = (Date.now() - created) / 60000;
+  return ageMin <= maxAlertAge;
+}
+
+function passesFilters(sig){
+  return passesScore(sig) && passesAge(sig);
+}
+
 function addSignal(sig){
   if(sig && sig.id != null) signalData.set(sig.id, sig);  // on conserve toujours la donnée
   if(cards.has(sig.id)) return;
-  if(!passesScore(sig)) return;                            // sous le curseur : masqué
+  if(!passesFilters(sig)) return;                          // sous le curseur ou hors filtre d'âge : masqué
   const grid = document.getElementById("cardsGrid");
   const el = renderCard(sig);
   grid.insertBefore(el, grid.firstChild);
@@ -673,19 +707,20 @@ function addSignal(sig){
   applyFilter();
 }
 
-function reconcileCardsWithScore(){
-  // Retire les cartes passées sous le curseur, (ré)affiche celles qui repassent
-  // au-dessus (après un déplacement du curseur).
+function reconcileCardsWithFilters(){
+  // Retire les cartes qui ne passent plus le curseur SCORE MIN ou le filtre
+  // ÂGE DU TOKEN, (ré)affiche celles qui repassent (après un déplacement du
+  // curseur ou un changement de filtre d'âge).
   for(const [id, el] of Array.from(cards)){
     const sig = signalData.get(id);
-    if(!sig || !passesScore(sig)){
+    if(!sig || !passesFilters(sig)){
       el.remove();
       cards.delete(id);
     }
   }
   const grid = document.getElementById("cardsGrid");
   for(const [id, sig] of signalData){
-    if(!cards.has(id) && passesScore(sig)){
+    if(!cards.has(id) && passesFilters(sig)){
       const el = renderCard(sig);
       grid.insertBefore(el, grid.firstChild);
       cards.set(id, el);
@@ -944,7 +979,20 @@ document.getElementById("scoreSlider").addEventListener("change", (e) => {
   }
   minScore = parseInt(e.target.value);
   if(bridge) bridge.setMinScore(minScore);
-  reconcileCardsWithScore();   // applique le nouveau plancher aux cartes déjà à l'écran
+  reconcileCardsWithFilters();   // applique le nouveau plancher aux cartes déjà à l'écran
+});
+
+// Filtre ÂGE DU TOKEN : sélection exclusive (un seul bouton actif à la fois),
+// contrairement aux puces de chaîne qui se cumulent.
+document.querySelectorAll("#ageToggles .age-chip").forEach(btn => {
+  btn.addEventListener("click", () => {
+    maxAlertAge = parseInt(btn.dataset.age, 10) || 0;
+    document.querySelectorAll("#ageToggles .age-chip").forEach(b => {
+      b.classList.toggle("active", b === btn);
+    });
+    if(bridge) bridge.setMaxAlertAge(maxAlertAge);
+    reconcileCardsWithFilters();   // applique le nouveau filtre aux cartes déjà à l'écran
+  });
 });
 
 // Sélecteur de chaînes : chaque puce active/désactive une chaîne. On empêche
@@ -1085,6 +1133,15 @@ new QWebChannel(qt.webChannelTransport, function(channel){
       b.classList.toggle("active", alertChains.has(b.dataset.chain));
     });
     applyFilter();
+  });
+
+  // Reflète le filtre d'âge réellement actif côté scanner (state.max_alert_age_minutes).
+  bridge.getMaxAlertAge(function(minutes){
+    maxAlertAge = Number(minutes) || 0;
+    document.querySelectorAll("#ageToggles .age-chip").forEach(b => {
+      b.classList.toggle("active", (parseInt(b.dataset.age, 10) || 0) === maxAlertAge);
+    });
+    reconcileCardsWithFilters();
   });
 
   bridge.newSignal.connect(function(jsonStr){

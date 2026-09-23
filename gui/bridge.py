@@ -155,6 +155,21 @@ class Bridge(QObject):
     def setMinScore(self, value: int):
         self.scanner.set_min_score(value)
 
+    @pyqtSlot(int)
+    def setMaxAlertAge(self, minutes: int):
+        """
+        Filtre d'affichage/alerte par âge du token (boutons 1/5/10/15/30 min...
+        de l'interface). 0 (ou toute valeur <= 0) désactive le filtre — le bouton
+        « TOUT » de l'interface envoie 0. Ne modifie aucun seuil de sécurité, ni
+        ce qui est scanné/vérifié : uniquement ce qui est affiché et alerté.
+        """
+        self.scanner.set_max_alert_age(minutes if minutes and minutes > 0 else None)
+
+    @pyqtSlot(result=int)
+    def getMaxAlertAge(self) -> int:
+        """0 = pas de filtre, sinon l'âge maximal en minutes actuellement choisi."""
+        return self.scanner.state.max_alert_age_minutes or 0
+
     @pyqtSlot()
     def run(self):
         self.scanner.run()

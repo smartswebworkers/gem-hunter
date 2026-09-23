@@ -97,6 +97,13 @@ class ScannerState:
         self.mode = "safe"  # "safe" | "aggressive"
         self.min_score = cfg.MIN_SCORE_TO_BUY
         self.watch_enabled = True   # alertes précoces non vérifiées
+        # Filtre d'affichage/alerte par âge du token (boutons 1/5/10/15/30 min...
+        # de l'interface). None = pas de filtre (tout âge, comportement par
+        # défaut). Ne change NI le scan, NI le scoring, NI les seuils de sécurité
+        # (MIN_PAIR_AGE_MINUTES reste seul maître de la promotion en SIGNAL) —
+        # uniquement ce qui est affiché et envoyé sur Telegram, exactement comme
+        # min_score ci-dessus.
+        self.max_alert_age_minutes: int | None = None
         self.active_chains = set(cfg.ACTIVE_CHAINS)
         self.on_new_signal = None   # callback(dict) fourni par l'interface
         self.on_stats_update = None
@@ -111,6 +118,7 @@ class ScannerState:
                 "watch_enabled": self.watch_enabled,
                 "mode": self.mode,
                 "min_score": self.min_score,
+                "max_alert_age_minutes": self.max_alert_age_minutes,
                 "active_chains": sorted(self.active_chains),
             }
 
@@ -209,6 +217,42 @@ class Scanner:
             f"Seuil de score minimum réglé à {clamped}/100 "
             f"(veille comprise : rien en dessous de {self.watch_threshold()}/100 ne sera affiché)."
         )
+
+    def set_max_alert_age(self, minutes: int | None):
+        """
+        Filtre d'affichage/alerte par âge du token (boutons 1/5/10/15/30 min...
+        de l'interface, « TOUT » pour couper le filtre). `minutes<=0` ou `None`
+        désactive le filtre. Ce n'est PAS un seuil de sécurité : un token trop
+        vieux pour le filtre continue d'être scanné, vérifié, suivi en file de
+        promotion et enregistré normalement — il est seulement exclu de
+        l'affichage dashboard et des alertes Telegram tant qu'il ne rentre pas
+        dans la fenêtre choisie. MIN_PAIR_AGE_MINUTES (sécurité, définit ce qui
+        peut devenir un SIGNAL) n'est pas touché.
+        """
+        if minutes is None or minutes <= 0:
+            self.state.max_alert_age_minutes = None
+            logger.info("Filtre d'âge des alertes désactivé (tous âges affichés).")
+            return
+        self.state.max_alert_age_minutes = int(minutes)
+        logger.info(f"Filtre d'âge des alertes réglé à {int(minutes)} min max.")
+
+    def _passes_age_filter(self, candidate: dict) -> bool:
+        """
+        True si ce candidat rentre dans la fenêtre d'âge choisie par
+        l'utilisateur (ou si aucun filtre n'est actif). Un âge inconnu
+        (`pair_created_at` absent, cas fréquent pour une création pump.fun tout
+        juste vue par le flux temps réel, avant toute indexation) est laissé
+        passer plutôt que caché : on ne sait pas encore son âge, on ne présume
+        pas qu'il est hors fenêtre.
+        """
+        max_age = self.state.max_alert_age_minutes
+        if not max_age:
+            return True
+        created_ms = candidate.get("pair_created_at")
+        if not created_ms:
+            return True
+        age_minutes = (time.time() * 1000 - created_ms) / 60_000
+        return age_minutes <= max_age
 
     def watch_threshold(self) -> int:
         """
@@ -368,7 +412,8 @@ class Scanner:
             self._process_chain(chain, module, candidates)
 
     def _process_chain(self, chain: str, module, candidates: list[dict]):
-        stats = {"seen": 0, "prefiltered": 0, "rejected": 0, "below": 0, "watch": 0, "signal": 0}
+        stats = {"seen": 0, "prefiltered": 0, "rejected": 0, "below": 0, "watch": 0, "signal": 0,
+                 "filtered_age": 0}
 
         fresh: list[dict] = []
         for candidate in candidates:
@@ -452,6 +497,7 @@ class Scanner:
                 f"[{chain}] bilan du cycle : {stats['seen']} candidat(s), "
                 f"{stats['prefiltered']} écarté(s) sur critères de marché, "
                 f"{stats['rejected']} rejeté(s) sécurité, {stats['below']} sous le seuil, "
+                f"{stats['filtered_age']} hors filtre d'âge, "
                 f"{stats['watch']} en veille, {stats['signal']} signal(aux) validé(s)."
             )
 
@@ -485,6 +531,11 @@ class Scanner:
         if score < self.state.min_score:
             stats["below"] += 1
             logger.info(f"[{chain}] {ticker} vérifié mais sous le seuil — {score}/100 < {self.state.min_score}/100")
+            return
+
+        if not self._passes_age_filter(candidate):
+            stats["filtered_age"] += 1
+            logger.debug(f"[{chain}] {ticker} signal valide mais hors du filtre d'âge choisi — masqué.")
             return
 
         # Vérification « DEX Paid », faite seulement maintenant : elle coûte un
@@ -590,6 +641,19 @@ class Scanner:
                 f"[{chain}] {ticker} en veille mais sous le seuil — "
                 f"{score}/100 < {self.watch_threshold()}/100"
             )
+            return
+
+        if not self._passes_age_filter(candidate):
+            # Hors du filtre d'âge choisi dans l'interface : pas d'alerte ni de
+            # carte, mais le suivi continue comme pour le bouton VEILLE coupé
+            # ci-dessous — le token pourra quand même être promu en SIGNAL, et
+            # redeviendra visible de lui-même si le filtre est élargi ensuite.
+            stats["filtered_age"] += 1
+            with self._watchlist_lock:
+                self._watchlist.setdefault(contract, {
+                    "chain": chain, "ticker": ticker,
+                    "first_seen": time.time(), "watch_signal_id": None,
+                })
             return
 
         if not self.state.watch_enabled or not getattr(cfg, "PUBLISH_WATCH_ALERTS", True):

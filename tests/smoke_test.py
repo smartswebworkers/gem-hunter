@@ -1261,6 +1261,104 @@ check(len(emis_fm) == 1 and "first_minute" not in emis_fm[0],
       "VEILLE émise sous curseur 0.30 : plus de clé first_minute, curseur seul juge",
       f"-> emis={len(emis_fm)}, keys_first_minute={'first_minute' in emis_fm[0] if emis_fm else None}")
 
+# --- 12e-bis. Filtre d'âge des alertes (boutons 1/5/10/15/30 min de l'UI) ---
+# Filtre d'AFFICHAGE/ALERTE uniquement : ne touche ni au scan, ni au scoring,
+# ni à MIN_PAIR_AGE_MINUTES (sécurité). Un candidat hors fenêtre reste
+# scanné/vérifié/suivi, il n'est simplement pas affiché ni envoyé sur Telegram
+# tant qu'il ne rentre pas dans la fenêtre choisie.
+scanner_age = Scanner(ScannerState())
+scanner_age.state.running = True
+scanner_age.state.telegram_enabled = False
+
+check(scanner_age.state.max_alert_age_minutes is None,
+      "Filtre d'âge désactivé par défaut (tous âges affichés)")
+
+scanner_age.set_max_alert_age(15)
+check(scanner_age.state.max_alert_age_minutes == 15,
+      "set_max_alert_age(15) : filtre réglé à 15 minutes")
+scanner_age.set_max_alert_age(0)
+check(scanner_age.state.max_alert_age_minutes is None,
+      "set_max_alert_age(0) : désactive le filtre, comme le bouton TOUT de l'UI")
+scanner_age.set_max_alert_age(-5)
+check(scanner_age.state.max_alert_age_minutes is None,
+      "set_max_alert_age(-5) : valeur invalide traitée comme désactivée")
+
+_now_ms = time.time() * 1000
+_age_jeune = {"pair_created_at": _now_ms - 2 * 60_000}     # 2 min
+_age_vieux = {"pair_created_at": _now_ms - 45 * 60_000}    # 45 min
+_age_inconnu = {"pair_created_at": None}
+
+scanner_age.state.max_alert_age_minutes = None
+check(scanner_age._passes_age_filter(_age_jeune) and scanner_age._passes_age_filter(_age_vieux)
+      and scanner_age._passes_age_filter(_age_inconnu),
+      "Filtre désactivé : tous les âges passent, y compris inconnu")
+
+scanner_age.state.max_alert_age_minutes = 15
+check(scanner_age._passes_age_filter(_age_jeune) is True,
+      "Filtre 15 min : un token de 2 min passe")
+check(scanner_age._passes_age_filter(_age_vieux) is False,
+      "Filtre 15 min : un token de 45 min est exclu")
+check(scanner_age._passes_age_filter(_age_inconnu) is True,
+      "Filtre 15 min : un âge inconnu passe (on ne présume pas qu'il est hors fenêtre)")
+
+# Intégration VEILLE : hors filtre d'âge, ni affichée ni alertée, mais reste
+# suivie en file de promotion (elle pourra quand même devenir un SIGNAL).
+scanner_age.set_min_score(30)
+scanner_age.set_max_alert_age(15)
+_watch_old = {
+    "chain": "solana", "contract": "OLDWATCH1", "ticker": "OLDW", "name": "OldWatch",
+    "tier": config.TIER_WATCH, "verified": False, "score": 90.0,
+    "pair_created_at": _now_ms - 45 * 60_000,
+    "missing_checks": ["âge"], "reasons": [], "features": {},
+}
+_stats_age = {"below": 0, "watch": 0, "filtered_age": 0}
+scanner_age._handle_watch("solana", _watch_old, _watch_old, _stats_age)
+check(_stats_age["filtered_age"] == 1 and _stats_age["watch"] == 0,
+      "VEILLE hors filtre d'âge (45 min > 15 min) : ni affichée ni alertée",
+      f"-> {_stats_age}")
+check("OLDWATCH1" in scanner_age._watchlist,
+      "Mais le token reste suivi malgré le filtre d'affichage (promotion en SIGNAL toujours possible)")
+
+_watch_young = dict(_watch_old, contract="YOUNGWATCH1", pair_created_at=_now_ms - 2 * 60_000)
+_stats_age2 = {"below": 0, "watch": 0, "filtered_age": 0}
+scanner_age._handle_watch("solana", _watch_young, _watch_young, _stats_age2)
+check(_stats_age2["watch"] == 1 and _stats_age2["filtered_age"] == 0,
+      "VEILLE dans le filtre d'âge (2 min <= 15 min) : affichée normalement")
+
+# Intégration SIGNAL : même logique, via _process_candidate (compute_score
+# monkeypatché pour isoler le test du moteur de scoring réel).
+from data_sources import dexscreener as _dsx_age
+import core.scanner as _sc_mod
+
+_orig_compute_score = _sc_mod.compute_score
+_orig_dex_paid = _dsx_age.check_dex_paid
+_dsx_age.check_dex_paid = lambda chain, contract: False
+emitted_age: list = []
+scanner_age.state.on_new_signal = lambda sig: emitted_age.append(sig)
+_stats_sig_age = {"seen": 0, "prefiltered": 0, "rejected": 0, "below": 0,
+                   "watch": 0, "signal": 0, "filtered_age": 0}
+try:
+    _sc_mod.compute_score = lambda candidate: {
+        **candidate, "rejected": False, "score": 90.0, "tier": config.TIER_SIGNAL,
+        "reasons": [], "missing_checks": [], "features": {},
+    }
+    _sig_old = {"chain": "bsc", "contract": "OLDSIG1", "ticker": "OLDS",
+                "price_usd": 0.001, "pair_created_at": _now_ms - 45 * 60_000}
+    scanner_age._process_candidate("bsc", _sig_old, _stats_sig_age)
+    _sig_young = {"chain": "bsc", "contract": "YOUNGSIG1", "ticker": "YOUNGS",
+                  "price_usd": 0.001, "pair_created_at": _now_ms - 2 * 60_000}
+    scanner_age._process_candidate("bsc", _sig_young, _stats_sig_age)
+finally:
+    _sc_mod.compute_score = _orig_compute_score
+    _dsx_age.check_dex_paid = _orig_dex_paid
+
+check(all(e.get("contract") != "OLDSIG1" for e in emitted_age)
+      and any(e.get("contract") == "YOUNGSIG1" for e in emitted_age),
+      "SIGNAL hors filtre d'âge (45 min) non émis, SIGNAL dans le filtre (2 min) émis normalement",
+      f"-> émis : {[e.get('contract') for e in emitted_age]}")
+check(_stats_sig_age["filtered_age"] == 1,
+      "Le SIGNAL masqué par le filtre d'âge est bien compté à part (pas confondu avec 'sous le seuil')")
+
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch
 # (jusqu'à 3 s/appel × 3 appels × 25 tokens sous 429). should_stop l'y coupe.
