@@ -433,20 +433,26 @@ check(verdict["verdict"] == VERDICT_WATCH,
       "Une paire de 3 minutes part en VEILLE : ses données ne sont pas encore fiables",
       f"-> {verdict['verdict']}")
 
-# Fenêtre d'âge PAR CHAÎNE : en degen (plafond global 6 h), une paire EVM de
-# 50 h reste dans la fenêtre (élargie à 96 h) — Nansen n'indexe rien de plus
-# jeune sur ces chaînes — alors que la MÊME paire sur Solana est écartée.
+# CORRECTIF — la fenêtre élargie (96 h) pour BNB/Base/Robinhood ne s'applique
+# maintenant QU'EN PROFIL « quality ». Elle s'appliquait aussi en « degen »,
+# ce qui contredisait sa promesse de détection précoce : mesuré en direct, un
+# token BSC pouvait remonter avec jusqu'à 96 h (4 jours) d'âge réel en degen
+# (ex. un token affiché "4 min" sur le dashboard avait en réalité 12,8 h — voir
+# Mise à jour 33 : le badge montrait l'heure de NOTRE détection, pas l'âge
+# réel). Signalé par l'utilisateur : « je veux des signaux pour être early dès
+# la création, pas des tokens vieux de plusieurs jours ».
+config.apply_profile("degen")
 check(config.chain_max_pair_age_hours("solana") == config.MAX_PAIR_AGE_HOURS
-      and config.chain_max_pair_age_hours("bsc") >= 96
-      and config.chain_max_pair_age_hours("base") >= 96
-      and config.chain_max_pair_age_hours("robinhood") >= 96,
-      "chain_max_pair_age_hours : 96 h sur BNB/Base/Robinhood, plafond du profil sur Solana",
+      and config.chain_max_pair_age_hours("bsc") == config.MAX_PAIR_AGE_HOURS
+      and config.chain_max_pair_age_hours("base") == config.MAX_PAIR_AGE_HOURS
+      and config.chain_max_pair_age_hours("robinhood") == config.MAX_PAIR_AGE_HOURS,
+      "En degen, TOUTES les chaines partagent le meme plafond strict (plus de surcharge EVM)",
       f"-> sol={config.chain_max_pair_age_hours('solana')} bsc={config.chain_max_pair_age_hours('bsc')}")
 
 _evm_50h = clean_bsc_token(pair_created_at=time.time() * 1000 - (50 * 3_600_000))
 _rej_evm, _rs_evm = evaluate_rejection(_evm_50h)
-check(not any("trop ancienne" in r for r in _rs_evm),
-      "Une paire BNB de 50 h n'est PLUS ecartee pour l'age (fenetre EVM = 96 h)",
+check(any("trop ancienne" in r for r in _rs_evm),
+      "En degen, une paire BNB de 50 h est desormais ecartee pour l'age, comme sur Solana",
       f"-> {_rs_evm}")
 _sol_50h = clean_bsc_token(chain="solana",
                            pair_created_at=time.time() * 1000 - (50 * 3_600_000))
@@ -455,8 +461,23 @@ check(any("trop ancienne" in r for r in _rs_sol),
       "La MEME paire de 50 h sur Solana reste ecartee pour l'age (fenetre 6 h intacte)",
       f"-> {_rs_sol}")
 
-# n'elargit jamais moins que le profil : en quality (fenetre 45 j) la surcharge
-# EVM 96 h ne doit pas rendre BNB plus strict.
+# En profil « quality » (qui vise justement des tokens installes depuis
+# plusieurs jours), la surcharge EVM s'applique toujours : une paire BNB de
+# 50 h n'y est PAS ecartee.
+config.apply_profile("quality")
+check(config.chain_max_pair_age_hours("bsc") >= 96
+      and config.chain_max_pair_age_hours("base") >= 96
+      and config.chain_max_pair_age_hours("robinhood") >= 96,
+      "En quality, la surcharge EVM (>= 96h) s'applique toujours sur BNB/Base/Robinhood",
+      f"-> bsc={config.chain_max_pair_age_hours('bsc')}")
+_evm_50h_q = clean_bsc_token(pair_created_at=time.time() * 1000 - (50 * 3_600_000))
+_rej_evm_q, _rs_evm_q = evaluate_rejection(_evm_50h_q)
+check(not any("trop ancienne" in r for r in _rs_evm_q),
+      "En quality, une paire BNB de 50 h n'est pas ecartee pour l'age (fenetre EVM elargie)",
+      f"-> {_rs_evm_q}")
+
+# La surcharge n'abaisse jamais sous le plafond du profil, meme en quality
+# avec un plafond global artificiellement etroit.
 _prev = config.MAX_PAIR_AGE_HOURS
 config.MAX_PAIR_AGE_HOURS = 45 * 24
 try:
@@ -464,6 +485,7 @@ try:
           "chain_max_pair_age_hours n'abaisse jamais sous le plafond du profil (cas quality)")
 finally:
     config.MAX_PAIR_AGE_HOURS = _prev
+config.apply_profile("degen")   # restaure le profil attendu par la suite des tests
 
 
 print("\n=== 8. L'auto-correction ne peut plus désarmer la sécurité ===")
@@ -881,6 +903,22 @@ check(all(c["contract"].startswith("fm")
 
 check(order_for_verification([], 25) == ([], 0),
       "order_for_verification : liste vide => rien a verifier, rien de reporte")
+
+# CORRECTIF — palier « early » (< EARLY_DETECTION_WINDOW_MINUTES, hors 1re
+# minute) desormais priorise sur le reste, meme avec moins de liquidite. Avant
+# ce correctif, un token de 45 min pouvait passer APRES un token de 5h juste
+# parce que ce dernier avait plus de liquidite — contraire a la demande de
+# priorite aux tokens detectes des la creation.
+def _early(min_, liq):   # token "early" (< 60 min), hors fenetre 1re minute
+    return {"contract": f"early{min_}", "is_pump_bonding_curve": False,
+            "pair_created_at": _n - min_ * 60_000, "liquidity": liq}
+
+_ordered2, _dropped2 = order_for_verification(
+    [_old(5, 900_000), _early(45, 1_000), _early(10, 500), _fm(30)], cap=10)
+check([c["contract"] for c in _ordered2] == ["fm30", "early10", "early45", "old5"]
+      and _dropped2 == 0,
+      "Palier 'early' (< 60 min) priorise sur le reste (liquidite), meme moins liquide",
+      f"-> {[c['contract'] for c in _ordered2]}")
 
 # --- 10b-bis. Selection des chaines pour les alertes (toggle_chain) --------
 from core.scanner import Scanner as _Sc, ScannerState as _St

@@ -31,6 +31,7 @@ from chains import solana, bsc, base, ethereum, robinhood, arc
 from core.scoring import compute_score
 from core.security_checks import (
     evaluate_market_prefilter, creator_reputation_veto, is_first_minute_candidate,
+    is_early_candidate,
 )
 from core.risk_management import compute_risk_plan
 from core.telegram_alerts import send_alert
@@ -55,31 +56,48 @@ def order_for_verification(candidates: list[dict], cap: int) -> tuple[list[dict]
     """
     Ordonne les candidats préfiltrés d'un cycle pour la vérification, et
     applique le plafond `cap`. Règle, À CHAQUE CYCLE (pas seulement en cas de
-    débordement) :
+    débordement), trois paliers PAR FRAÎCHEUR décroissante :
 
       1. les tokens de la fenêtre « première minute » d'abord, du plus jeune au
          plus ancien — un token nouveau-né passe AVANT un token de plusieurs
          heures ;
-      2. le reste ensuite, par liquidité décroissante.
+      2. CORRECTIF — les tokens « early » (< EARLY_DETECTION_WINDOW_MINUTES,
+         60 min par défaut) ensuite, du plus jeune au plus ancien. Avant ce
+         correctif, tout ce qui n'était pas dans la toute première minute était
+         mélangé au reste et trié par liquidité : un token de 45 minutes pouvait
+         donc être vérifié APRÈS un token de 5 heures simplement parce que ce
+         dernier avait plus de liquidité — contraire à la demande explicite de
+         l'utilisateur (« priorité aux tokens détectés dès la création, pas à
+         des tokens vieux de plusieurs heures ») ;
+      3. le reste enfin, par liquidité décroissante — ce ne sont plus des
+         détections « early », la liquidité redevient le critère pertinent.
 
     Sous le plafond, `FIRST_MINUTE_ENRICHMENT_RESERVE` créneaux sont garantis à
-    la fenêtre première minute avant que les plus liquides ne prennent le
-    reste ; s'il reste de la place, on complète avec d'autres tokens frais.
+    la fenêtre première minute avant que le palier « early » puis les plus
+    liquides ne prennent le reste ; s'il reste de la place après la réserve,
+    on complète avec le reste de la fenêtre première minute.
 
     Renvoie (liste_ordonnée_et_plafonnée, nombre_reporté).
     """
     first_min = [c for c in candidates if is_first_minute_candidate(c)]
-    others = [c for c in candidates if not is_first_minute_candidate(c)]
+    rest = [c for c in candidates if not is_first_minute_candidate(c)]
+    early = [c for c in rest if is_early_candidate(c)]
+    others = [c for c in rest if not is_early_candidate(c)]
+
     first_min.sort(key=lambda c: c.get("pair_created_at") or 0, reverse=True)
+    early.sort(key=lambda c: c.get("pair_created_at") or 0, reverse=True)
     others.sort(key=lambda c: c.get("liquidity") or 0, reverse=True)
 
-    total = len(first_min) + len(others)
+    ordered = first_min + early + others
+    total = len(ordered)
     if total <= cap:
-        return first_min + others, 0
+        return ordered, 0
 
     reserve = min(len(first_min),
                   getattr(cfg, "FIRST_MINUTE_ENRICHMENT_RESERVE", 0), cap)
-    kept = first_min[:reserve] + others[:cap - reserve]
+    kept = first_min[:reserve]
+    kept += early[:cap - len(kept)]
+    kept += others[:cap - len(kept)]
     if len(kept) < cap:
         kept += first_min[reserve:reserve + (cap - len(kept))]
     return kept, total - len(kept)

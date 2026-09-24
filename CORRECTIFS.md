@@ -1842,3 +1842,46 @@ maintenant les 3 liens (Axiom, Nansen, Binance Web3), comme pour Solana/BSC/Base
 
 247 tests, 0 échec : le test qui vérifiait explicitement l'ABSENCE de Binance
 Web3 pour Arc est remplacé par un test qui vérifie la présence des 3 liens.
+
+## Mise à jour 35 — DEGEN affichait des tokens vieux de plusieurs jours (bug réel trouvé et corrigé)
+
+**Demandé par l'utilisateur** : « la priorité doit être pour les tokens détectés
+just now, ne mets pas des tokens qui existent depuis des jours ou des années,
+je veux des signaux pour être early dès la création. »
+
+**Vérifié en direct avant tout changement** (comme pour chaque correctif de ce
+bot) : en profil DEGEN, `nansen.screen_tokens("bsc")` remontait réellement des
+tokens jusqu'à 96 heures (4 jours) d'âge — par exemple GSTONK à 80h, JINWU à
+95h, MUSEWORLD (Base) à 104h. Un des tokens retrouvés dans ce test,
+**IMDSTRTGY**, correspond exactement à une carte vue sur le dashboard de
+l'utilisateur affichant « 4 min » alors qu'il avait déjà 12,8 heures réelles —
+la preuve concrète du bug.
+
+**Cause :** `config.CHAIN_MAX_PAIR_AGE_HOURS` (BSC/Base/Robinhood → 96 h,
+introduite pour que la découverte Nansen sur ces chaînes ne remonte pas 0
+résultat) s'appliquait **quel que soit le profil actif**, y compris en DEGEN
+dont c'est justement la promesse inverse (early uniquement). Cette surcharge
+n'a de sens qu'en profil « quality », qui vise au contraire des tokens
+installés depuis plusieurs jours.
+
+**Corrigé** (`config.py::chain_max_pair_age_hours`) : la surcharge à 96 h ne
+s'applique plus qu'en profil « quality ». En DEGEN, toutes les chaînes
+(Solana, BSC, Base, Robinhood, Arc) partagent désormais le même plafond strict
+du profil (6 h par défaut) — DEGEN redevient vraiment « early only » sur
+toutes les chaînes, pas seulement Solana. Aucun veto de sécurité (honeypot,
+mint/freeze, LP lock, concentration...) n'est touché : l'âge d'une paire n'a
+jamais été un critère anti-rug dans ce bot.
+
+**Priorité de traitement, également corrigée** (`core/scanner.py::order_for_verification`) :
+avant ce correctif, seuls les tokens de moins de 3 minutes (fenêtre « première
+minute ») passaient en tête ; tout le reste, y compris un token de 45 minutes,
+était mélangé et trié par LIQUIDITÉ — un token de 5 heures plus liquide passait
+donc avant un token de 45 minutes. Un palier intermédiaire est ajouté : les
+tokens « early » (< 60 min, hors 1re minute) sont désormais vérifiés par ordre
+de fraîcheur, avant le reste (trié par liquidité comme avant). Trois paliers au
+lieu de deux : 1re minute → early (< 60 min) → reste par liquidité.
+
+250 tests, 0 échec (247 → 250) : en degen, toutes les chaînes partagent le même
+plafond d'âge strict et une paire BNB de 50 h est désormais écartée comme sur
+Solana ; en quality, la surcharge EVM reste intacte (c'est sa raison d'être) ;
+le palier « early » passe bien avant un token plus liquide mais plus ancien.

@@ -359,7 +359,9 @@ def chain_threshold(name: str, chain: str | None):
 # Robinhood il n'y a pas de bonding-curve firehose, et le smart-money (Nansen)
 # n'entre qu'une fois le token installé — de l'ordre de la journée, jamais 6 h.
 # Une fenêtre de 6 h y rend la découverte Nansen littéralement vide (mesuré :
-# 0 résultat sur les trois chaînes). On élargit donc à 96 h pour ces chaînes.
+# 0 résultat sur les trois chaînes). On élargit donc à 96 h pour ces chaînes —
+# mais UNIQUEMENT en profil « quality » (voir CORRECTIF ci-dessous), qui vise
+# justement des tokens installés depuis plusieurs jours.
 #
 # L'âge d'une paire n'est PAS un filtre anti-rug : une paire plus ancienne a
 # MOINS de risque de rug éclair — le profil « quality » impose d'ailleurs 12 h
@@ -373,13 +375,32 @@ CHAIN_MAX_PAIR_AGE_HOURS = {
 }
 
 
+# CORRECTIF — cette surcharge s'appliquait AUSSI en profil « degen », en
+# contradiction directe avec sa promesse (« priorité aux tokens détectés dès
+# la création, pas de veille sur ce qui existe déjà depuis des jours »).
+# Preuve mesurée : sous ce profil, `nansen.screen_tokens("bsc")` remontait des
+# tokens jusqu'à 96 h (4 jours) d'âge réel — dont un identique à un token vu
+# sur le dashboard affichant seulement « 4 min » (voir Mise à jour 33 : l'âge
+# affiché était celui de notre détection, pas l'âge réel). La cause était que
+# `chain_max_pair_age_hours()` élargissait la fenêtre pour BSC/Base/Robinhood
+# quel que soit le profil actif. La surcharge n'a de sens QUE pour « quality »,
+# dont c'est précisément la philosophie (traction, historique de plusieurs
+# jours). En « degen », le plafond global du profil (par défaut 6 h) s'applique
+# maintenant à TOUTES les chaînes sans exception.
 def chain_max_pair_age_hours(chain: str | None) -> float:
     """
-    Plafond d'âge d'une paire pour cette chaîne (heures). Solana et les chaînes
-    non listées gardent le plafond global du profil. Ne peut qu'élargir : en
-    profil « quality » (fenêtre déjà de 45 jours) la surcharge EVM n'a aucun
-    effet.
+    Plafond d'âge d'une paire pour cette chaîne (heures).
+
+    En profil « quality », Solana et les chaînes non listées gardent le
+    plafond global du profil (45 jours par défaut) ; BSC/Base/Robinhood sont
+    élargies à 96 h minimum (sans jamais RÉDUIRE la fenêtre déjà large du
+    profil). En profil « degen », la surcharge ne s'applique PLUS : toutes les
+    chaînes partagent le même plafond strict (6 h par défaut), pour que
+    « degen » reste fidèle à sa promesse de détection précoce sur chaque
+    chaîne, pas seulement sur Solana.
     """
+    if SCAN_PROFILE != "quality":
+        return MAX_PAIR_AGE_HOURS
     override = CHAIN_MAX_PAIR_AGE_HOURS.get(chain or "")
     if override is None:
         return MAX_PAIR_AGE_HOURS
