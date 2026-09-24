@@ -27,7 +27,9 @@ rate-limité mais suffisant pour ce volume). Un RPC personnel (Helius,
 QuickNode...) configuré via RPC_SOLANA dans .env améliore nettement la
 fiabilité, et devient nécessaire si le scan tourne en continu.
 """
+import base64
 import logging
+import struct
 import threading
 import time
 
@@ -266,6 +268,52 @@ def _parse_mint_account(account: dict | None) -> dict | None:
         "supply_raw": supply_raw,
         "decimals": decimals,
     }
+
+
+def parse_bonding_curve(data_b64: str) -> dict | None:
+    """
+    Décode le compte d'état d'une bonding curve pump.fun (Anchor : 8 octets de
+    discriminant, puis virtual_token_reserves, virtual_sol_reserves,
+    real_token_reserves, real_sol_reserves, token_total_supply en u64, puis le
+    drapeau `complete`). Format vérifié sur des curves vivantes : les réserves
+    virtuelles lues à t~0 égalent celles de l'événement de création PumpPortal.
+
+    `real_sol` = le SOL réellement présent dans la curve, c'est-à-dire ce que les
+    acheteurs y ont investi net des ventes : la mesure de traction la plus directe
+    disponible sans flux de trades payant.
+    """
+    try:
+        raw = base64.b64decode(data_b64)
+    except (ValueError, TypeError):
+        return None
+    if len(raw) < 8 + 5 * 8 + 1:
+        return None   # compte vide / absent / pas une curve
+    _vt, _vs, _rt, real_sol_lamports, _supply = struct.unpack_from("<5Q", raw, 8)
+    return {"real_sol": real_sol_lamports / 1e9, "complete": bool(raw[8 + 5 * 8])}
+
+
+def probe_curves(curve_keys: list[str]) -> dict[str, dict]:
+    """
+    État de plusieurs bonding curves en UN appel groupé (100 par appel au plus).
+    Renvoie {clé_de_curve: {"real_sol", "complete"}} pour les seules curves
+    lisibles : un compte pas encore visible du RPC est simplement absent du
+    résultat ("on ne sait pas encore", jamais "zéro traction").
+    """
+    unique = list(dict.fromkeys(k for k in curve_keys if k))
+    out: dict[str, dict] = {}
+    for i in range(0, len(unique), 100):
+        chunk = unique[i:i + 100]
+        result, _ok = _call("getMultipleAccounts", [chunk, {"encoding": "base64"}])
+        values = result.get("value") if isinstance(result, dict) else None
+        if not isinstance(values, list):
+            continue
+        for key, account in zip(chunk, values):
+            data = account.get("data") if isinstance(account, dict) else None
+            if isinstance(data, list) and data and data[0]:
+                parsed = parse_bonding_curve(data[0])
+                if parsed:
+                    out[key] = parsed
+    return out
 
 
 def visible_mints(mint_addresses: list[str]) -> set[str]:

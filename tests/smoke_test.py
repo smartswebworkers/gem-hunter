@@ -1678,10 +1678,23 @@ from data_sources import pumpportal as _pp_fast
 from data_sources import dexscreener as _dsx_fast
 config.apply_profile("degen")
 _now_f = time.time()
-def _pump_tok(mint, age_s, mcap_sol=30):
+def _pump_tok(mint, age_s, mcap_sol=30, dev_sol=0.5):
     return {"mint": mint, "symbol": mint, "name": mint, "marketCapSol": mcap_sol,
             "vSolInBondingCurve": 30, "vTokensInBondingCurve": 1e9, "pool": "pump",
-            "traderPublicKey": "CREATOR", "_received_at": time.time() - age_s}
+            "traderPublicKey": "CREATOR", "bondingCurveKey": "CURVE_" + mint,
+            "solAmount": dev_sol, "_received_at": time.time() - age_s}
+
+# Etat des curves simule : par defaut, 6 SOL reels (=> ~5,5 SOL organiques, de la traction).
+_curve_real = {}
+_probe_curve_calls = []
+def _fake_probe_curves(keys):
+    _probe_curve_calls.append(list(keys))
+    out = {}
+    for k in keys:
+        v = _curve_real.get(k, 6.0)
+        if v is not None:           # None => curve pas encore lisible
+            out[k] = {"real_sol": v, "complete": False}
+    return out
 
 _pool_f = []
 _visible_f = set()   # mints que le « RPC » simulé connaît déjà
@@ -1693,6 +1706,8 @@ _pp_fast.get_recent_tokens = lambda max_age_seconds=600: [
     t for t in _pool_f if time.time() - t["_received_at"] <= max_age_seconds]
 _pp_fast.ensure_started = lambda: None
 _dsx_fast.get_sol_price_usd = lambda: 150.0
+_orig_probe_curves = solana_rpc.probe_curves
+solana_rpc.probe_curves = _fake_probe_curves
 try:
     _sc_fast = Scanner(ScannerState())
     _sc_fast.state.running = True
@@ -1742,6 +1757,37 @@ try:
     check(len(_proc_calls) == 2 and set(_proc_calls[1][1]).isdisjoint(_first_batch),
           "Chemin rapide : le reliquat est repris au passage suivant, rien n'est perdu")
 
+    # --- Porte d'IMPORTANCE : pas de traction => ni verification, ni alerte -------
+    _proc_calls.clear(); _probe_calls = []
+    solana_rpc.visible_mints = lambda mints: (_probe_calls.append(list(mints)) or set(mints))
+    _curve_real["CURVE_DEAD"] = 0.55      # dev 0.5 SOL + 0.05 organique : lancement mort
+    _pool_f[:] = [_pump_tok("DEAD", 6)]
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [] and "DEAD" in _sc_fast._fast_pending and _probe_calls == [],
+          "Importance : un lancement sans traction n'est NI vérifié NI alerté (et ne coûte aucun appel de vérification)")
+
+    _curve_real["CURVE_DEAD"] = 6.2       # de vrais acheteurs arrivent ensuite
+    _sc_fast._fast_pending["DEAD"]["next_at"] = 0.0
+    _sc_fast._fast_pump_tick()
+    check(len(_proc_calls) == 1 and _proc_calls[0][1] == ["DEAD"],
+          "Importance : dès que de vrais acheteurs arrivent, le token est vérifié puis alerté")
+
+    _proc_calls.clear()
+    _curve_real["CURVE_UNREAD"] = None    # curve pas encore lisible : on ne sait pas
+    _pool_f[:] = [_pump_tok("UNREAD", 6)]
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [] and "UNREAD" in _sc_fast._fast_pending,
+          "Importance : une curve pas encore lisible attend (inconnu n'est ni admis ni rejeté)")
+
+    _curve_real["CURVE_EXIT"] = 0.2       # le créateur avait mis 2 SOL et il n'en reste que 0,2
+    _pool_f[:] = [_pump_tok("EXIT", 6, dev_sol=2.0)]
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [] and "EXIT" not in _sc_fast._fast_pending and "EXIT" in _sc_fast._fast_seen
+          and _sc_fast._is_recently_rejected("solana", "EXIT"),
+          "Importance : un créateur qui a retiré sa mise est rejeté (signature de rug) et mémorisé")
+    _curve_real.clear(); _visible_f.add("DEAD")
+    solana_rpc.visible_mints = lambda mints: {m for m in mints if m in _visible_f}
+
     _proc_calls.clear()
     _pool_f[:] = [_pump_tok("STALE", 200)]
     _visible_f.add("STALE")
@@ -1786,7 +1832,138 @@ finally:
     _pp_fast.get_recent_tokens, _pp_fast.ensure_started, _dsx_fast.get_sol_price_usd = (
         _orig_recent, _orig_start, _orig_price)
     solana_rpc.visible_mints = _orig_vis
+    solana_rpc.probe_curves = _orig_probe_curves
     config.FAST_PUMP_PATH = True
+
+# --- 12e-quinquies. Porte d'importance : verdict, lecture de la curve, cycle ---------
+import base64 as _b64, struct as _struct
+from core.security_checks import early_traction_verdict, evaluate_security
+config.apply_profile("degen")
+
+def _pc(real_sol, dev_sol, **kw):
+    return {"source": "pumpportal", "is_pump_bonding_curve": True, "curve_real_sol": real_sol,
+            "dev_buy_sol": dev_sol, **kw}
+
+check(early_traction_verdict(_pc(6.0, 0.5))[0] == "ok", "Verdict : 5,5 SOL organiques => alerte possible")
+check(early_traction_verdict(_pc(0.6, 0.5))[0] == "wait", "Verdict : 0,1 SOL organique => pas d'alerte (attend)")
+check(early_traction_verdict(_pc(5.5, 0.5))[0] == "ok" and early_traction_verdict(_pc(5.4, 0.5))[0] == "wait",
+      "Verdict : le seuil est EARLY_MIN_ORGANIC_SOL (5 SOL organiques)")
+check(early_traction_verdict({"source": "pumpportal", "is_pump_bonding_curve": True, "dev_buy_sol": 0.5})[0] == "wait",
+      "Verdict : curve illisible => on attend (jamais admis à l'aveugle)")
+check(early_traction_verdict(_pc(0.3, 2.0))[0] == "reject",
+      "Verdict : le créateur a retiré sa mise => rejet")
+check(early_traction_verdict(_pc(0.05, 0.1))[0] == "wait",
+      "Verdict : un petit achat initial (<0,3 SOL) n'est pas pris pour une sortie du créateur")
+check(early_traction_verdict(_pc(0.0, 0.0, curve_complete=True))[0] == "ok",
+      "Verdict : un token qui a déjà migré a fait ses preuves")
+check(early_traction_verdict({"source": "dexscreener", "is_pump_bonding_curve": False})[0] == "ok"
+      and early_traction_verdict({"chain": "bsc", "contract": "0x"})[0] == "ok",
+      "Verdict : ne concerne que les créations PumpPortal (EVM et tokens migrés inchangés)")
+config.EARLY_TRACTION_GATE = False
+check(early_traction_verdict(_pc(0.0, 0.0))[0] == "ok", "Verdict : EARLY_TRACTION_GATE = False désactive la porte")
+config.EARLY_TRACTION_GATE = True
+
+# Lecture de l'état on-chain d'une curve (format Anchor de pump.fun).
+def _curve_b64(real_sol_lamports, complete=False):
+    raw = b"\x17\xb7\xf8\x37\x60\xd8\xac\x60" + _struct.pack("<5Q", 1_000_000_000_000, 30_000_000_000,
+                                                             793_100_000_000_000, real_sol_lamports, 1_000_000_000_000_000)
+    return _b64.b64encode(raw + bytes([1 if complete else 0])).decode()
+_pcv = solana_rpc.parse_bonding_curve(_curve_b64(6_250_000_000))
+check(_pcv is not None and abs(_pcv["real_sol"] - 6.25) < 1e-9 and _pcv["complete"] is False,
+      "Curve : le SOL réel est décodé depuis le compte on-chain", f"-> {_pcv}")
+check(solana_rpc.parse_bonding_curve(_b64.b64encode(b"").decode()) is None
+      and solana_rpc.parse_bonding_curve("pas-du-base64!!") is None,
+      "Curve : un compte vide ou invalide n'est jamais lu comme « zéro SOL »")
+
+_orig_call_pc = solana_rpc._call
+_gma_calls = []
+def _fake_call_pc(method, params):
+    _gma_calls.append((method, len(params[0])))
+    keys = params[0]
+    return {"value": [({"data": [_curve_b64(2_000_000_000), "base64"]} if k != "K_MISSING" else None)
+                      for k in keys]}, True
+solana_rpc._call = _fake_call_pc
+try:
+    _probe = solana_rpc.probe_curves(["K1", "K2", "K_MISSING", "K1"])
+    check(len(_gma_calls) == 1 and set(_probe) == {"K1", "K2"} and abs(_probe["K1"]["real_sol"] - 2.0) < 1e-9,
+          "Curve : plusieurs curves en UN appel groupé ; une curve absente n'apparaît pas (inconnu)",
+          f"-> appels={_gma_calls} resultat={sorted(_probe)}")
+    _gma_calls.clear()
+    solana_rpc.probe_curves([f"K{i}" for i in range(250)])
+    check(len(_gma_calls) == 3 and max(n for _m, n in _gma_calls) == 100,
+          "Curve : au plus 100 comptes par appel (limite du RPC)", f"-> {_gma_calls}")
+finally:
+    solana_rpc._call = _orig_call_pc
+
+# annotate_traction : renseigne les champs, ignore ce qui est déjà lu, laisse l'illisible à None.
+_orig_pc2 = solana_rpc.probe_curves
+solana_rpc.probe_curves = lambda keys: {k: {"real_sol": 4.0, "complete": False} for k in keys if k != "C_NOPE"}
+try:
+    from chains import solana as _sol_tr
+    _a = {"source": "pumpportal", "bonding_curve": "C_A", "dev_buy_sol": 1.0}
+    _b = {"source": "pumpportal", "bonding_curve": "C_NOPE", "dev_buy_sol": 1.0}
+    _c = {"source": "dexscreener", "bonding_curve": None}
+    _sol_tr.annotate_traction([_a, _b, _c])
+    check(_a["curve_real_sol"] == 4.0 and abs(_a["organic_sol"] - 3.0) < 1e-9
+          and "curve_real_sol" not in _b and "curve_real_sol" not in _c,
+          "annotate_traction : organique = SOL de la curve - achat du créateur ; illisible et non-Pump laissés intacts")
+finally:
+    solana_rpc.probe_curves = _orig_pc2
+
+# Veto « traction faite par trop peu de wallets » (wash / bundle).
+def _sec_ok(**cand):
+    base = {"chain": "solana", "contract": "M", "ticker": "T", "source": "pumpportal",
+            "is_pump_bonding_curve": True,
+            "security": {"data_available": True, "mint_authority_active": False,
+                         "freeze_authority_active": False}}
+    base.update(cand)
+    return evaluate_security(base)
+_few = _sec_ok(holder_accounts=2)
+check(any("wallets" in v.lower() for v in _few.get("vetoes", []) + _few.get("reasons", [])) or _few.get("verdict") != _sec_ok(holder_accounts=12).get("verdict"),
+      "Wash/bundle : 2 porteurs seulement derrière la « traction » est rejeté, 12 ne l'est pas")
+check(not any("wallets" in v.lower() for v in _sec_ok(holder_accounts=12).get("vetoes", [])),
+      "Wash/bundle : 12 porteurs individuels ne déclenchent pas le veto")
+
+# Porte appliquée au CYCLE NORMAL : un lancement sans traction n'atteint pas la vérification réseau.
+_sc_gate = Scanner(ScannerState()); _sc_gate.state.running = True
+_enr = []
+class _ModGate:
+    def annotate_traction(self, cands):
+        for c in cands:
+            c["curve_real_sol"] = c.pop("_real"); c["organic_sol"] = c["curve_real_sol"] - c["dev_buy_sol"]
+    def enrich_batch(self, cands, should_stop=None):
+        _enr.extend(c["contract"] for c in cands); return cands
+import core.scanner as _sc_g
+_o_cs, _o_mpf = _sc_g.compute_score, _sc_g.evaluate_market_prefilter
+_sc_g.compute_score = lambda cand: {**cand, "rejected": True, "score": 0, "reasons": ["x"], "tier": None}
+_sc_g.evaluate_market_prefilter = lambda cand: []
+try:
+    _mk = lambda m, real: {"contract": m, "ticker": m, "source": "pumpportal", "is_pump_bonding_curve": True,
+                           "dev_buy_sol": 0.5, "_real": real}
+    _sc_gate._process_chain("solana", _ModGate(), [_mk("DEADTOKEN", 0.55), _mk("HOTTOKEN", 8.0)])
+finally:
+    _sc_g.compute_score, _sc_g.evaluate_market_prefilter = _o_cs, _o_mpf
+check(_enr == ["HOTTOKEN"],
+      "Cycle normal : le lancement sans traction n'est pas vérifié, celui qui a de vrais acheteurs l'est",
+      f"-> {_enr}")
+
+# La traction réelle figure parmi les raisons de l'alerte (traduite comme les autres).
+_sc_tr = Scanner(ScannerState()); _sc_tr.state.running = True; _sc_tr.state.on_new_signal = lambda s: _tr_out.append(s)
+_tr_out = []
+_o_cs_tr = _sc_g.compute_score
+_sc_g.compute_score = lambda cand: {**cand, "rejected": False, "score": 90.0, "tier": config.TIER_WATCH,
+                                    "reasons": ["Liquidité solide."], "missing_checks": [], "features": {}}
+_sc_tr.state.telegram_enabled = False; _sc_tr.set_min_score(30)
+try:
+    _sc_tr._process_candidate("solana", {"contract": "TRACTOK", "ticker": "TR", "organic_sol": 7.3,
+                                        "holder_accounts": 9, "chain": "solana"}, {"below": 0, "watch": 0})
+finally:
+    _sc_g.compute_score = _o_cs_tr
+from core.telegram_alerts import format_alert as _fa_tr
+check(_tr_out and "7.3 SOL" in _tr_out[0]["reasons"][0] and "9" in _tr_out[0]["reasons"][0]
+      and "Real traction" in _fa_tr(_tr_out[0], "en") and "Traction réelle" in _fa_tr(_tr_out[0], "fr"),
+      "L'alerte affiche la traction réelle (SOL organiques + porteurs), traduite en fr/en",
+      f"-> {_tr_out[0]['reasons'][:1] if _tr_out else None}")
 
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch

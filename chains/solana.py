@@ -88,6 +88,9 @@ def candidates_from_pump_tokens(tokens: list[dict], sol_price_usd: float) -> lis
             # exactement la curve du calcul de concentration (voir
             # solana_rpc.get_holder_concentration).
             "bonding_curve": token.get("bondingCurveKey"),
+            # SOL de l'achat initial du créateur : sert à isoler l'achat ORGANIQUE
+            # (voir annotate_traction et core/security_checks.early_traction_verdict).
+            "dev_buy_sol": token.get("solAmount") or 0.0,
             # Correctif : plus de `or True`. Un token dont le champ pool est
             # absent ou inconnu est traité comme une bonding curve par défaut,
             # ce qui est le choix prudent puisque PumpPortal ne diffuse que des
@@ -98,6 +101,26 @@ def candidates_from_pump_tokens(tokens: list[dict], sol_price_usd: float) -> lis
             "source": "pumpportal",
         })
     return candidates
+
+
+def annotate_traction(candidates: list[dict]) -> None:
+    """
+    Renseigne curve_real_sol / curve_complete / organic_sol sur les candidats
+    PumpPortal, en un appel RPC groupé. Un candidat dont la curve n'est pas encore
+    lisible reste SANS ces champs (inconnu), jamais à zéro. Ignore ceux déjà annotés.
+    """
+    todo = [c for c in candidates
+            if c.get("source") == "pumpportal" and c.get("bonding_curve")
+            and c.get("curve_real_sol") is None]
+    if not todo:
+        return
+    states = solana_rpc.probe_curves([c["bonding_curve"] for c in todo])
+    for c in todo:
+        st = states.get(c["bonding_curve"])
+        if st is not None:
+            c["curve_real_sol"] = st["real_sol"]
+            c["curve_complete"] = st["complete"]
+            c["organic_sol"] = st["real_sol"] - (c.get("dev_buy_sol") or 0.0)
 
 
 def _from_dexscreener() -> list[dict]:
@@ -225,6 +248,9 @@ def enrich_with_security(candidate: dict) -> dict:
         existing = sec.get("top10_holder_pct")
         sec["top10_holder_pct"] = rpc_top10 if existing is None else max(existing, rpc_top10)
         candidate["largest_holder_pct"] = concentration["largest_holder_pct"]
+        # Nombre de porteurs individuels (hors curve) parmi les 20 plus gros
+        # comptes : sert à repérer une "traction" faite par un ou deux wallets.
+        candidate["holder_accounts"] = concentration.get("accounts_counted")
 
     creator = candidate.get("creator")
     if creator:

@@ -126,6 +126,23 @@ FAST_PUMP_RETRY_SECONDS = 2        # délai entre deux sondes d'un mint pas enco
 FAST_PUMP_MAX_AGE_SECONDS = 90     # au-delà, le cycle normal prend le relais
 FAST_PUMP_BATCH = 6                # créations traitées par passage (les plus fraîches d'abord)
 
+# --- Porte d'IMPORTANCE des créations pump.fun ---------------------------------
+# Constat mesuré (74 lancements vivants, à 30 s) : médiane d'achat ORGANIQUE
+# (SOL réellement dans la curve moins l'achat initial du créateur) = 0,00 SOL ;
+# seulement ~7 % dépassent 3 SOL. Alerter tout lancement dont le contrat est
+# "propre" produisait ~24 alertes en 150 s, presque toutes sans intérêt : un
+# contrat propre à la seconde 15 ne dit rien de la valeur du token. La traction
+# est lue sur l'état on-chain de la curve (gratuit, un appel RPC groupé).
+# N'AJOUTE qu'un filtre : aucun veto de sécurité n'est touché ni relâché.
+EARLY_TRACTION_GATE = True
+EARLY_MIN_ORGANIC_SOL = 5.0        # ~750 $ d'acheteurs réels ; 0 = pas de plancher. La distribution
+                                   # mesurée est bimodale (3, 5 ou 10 SOL donnent presque le même nombre
+                                   # de tokens) : 3 SOL laissait passer des cas marginaux (2 alertes sur 3
+                                   # en test réel étaient à 3,3-3,5 SOL).
+EARLY_DEV_EXIT_MIN_DEV_SOL = 0.3   # sortie du créateur : ne se juge que si son achat est significatif
+EARLY_DEV_EXIT_RATIO = 0.85        # curve < 85 % de l'achat du créateur => il a retiré sa mise
+EARLY_MIN_HOLDER_ACCOUNTS = 5      # porteurs individuels minimum (dev compris) : sinon wash/bundle
+
 # =============================================================================
 # CRITÈRES DE MARCHÉ
 # =============================================================================

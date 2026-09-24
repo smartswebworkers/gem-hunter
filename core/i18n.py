@@ -327,6 +327,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Vertical rise of {value}% in 1h (maximum {max}%) — entering at the top of the pump.",
         "zh": "1小时内暴涨 {value}%（上限 {max}%）——此时进场等于买在拉盘顶部。",
     },
+    "veto.curve_unreadable": {
+        "fr": "L'état de la bonding curve n'est pas encore lisible.",
+        "en": "The bonding curve state is not readable yet.",
+        "zh": "绑定曲线状态暂时无法读取。",
+    },
+    "veto.no_traction": {
+        "fr": "Pas assez d'achats réels ({value} SOL < {min} SOL) — lancement sans traction.",
+        "en": "Not enough real buying ({value} SOL < {min} SOL) — launch without traction.",
+        "zh": "真实买入不足（{value} SOL < {min} SOL）——该发行没有热度。",
+    },
+    "veto.dev_exited": {
+        "fr": "Le créateur est sorti : la curve ne contient plus que {now} SOL pour {dev} SOL d'achat initial.",
+        "en": "The creator has exited: the curve now holds only {now} SOL for {dev} SOL of initial buy.",
+        "zh": "开发者已撤出：曲线中仅剩 {now} SOL，而其初始买入为 {dev} SOL。",
+    },
+    "veto.few_wallets": {
+        "fr": "Achats concentrés sur trop peu de wallets ({value} < {min}) — wash trading ou bundle probable.",
+        "en": "Buying concentrated in too few wallets ({value} < {min}) — likely wash trading or bundle.",
+        "zh": "买入集中在过少钱包（{value} < {min}）——疑似对倒或捆绑。",
+    },
     "veto.pair_too_old": {
         "fr": "Paire trop ancienne ({value}h > {max}h).",
         "en": "Pair too old ({value}h > {max}h).",
@@ -501,6 +521,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Capacité à revendre non vérifiée (second avis RugCheck indisponible).",
         "en": "Sellability not verified (RugCheck second opinion unavailable).",
         "zh": "卖出能力未经验证（RugCheck 二次核验不可用）。",
+    },
+    "reason.traction": {
+        "fr": "Traction réelle : {sol} SOL d'achats organiques, {holders} porteurs individuels.",
+        "en": "Real traction: {sol} SOL of organic buying, {holders} individual holders.",
+        "zh": "真实热度：{sol} SOL 的自然买入，{holders} 个独立持有者。",
     },
     "reason.rugcheck_score": {
         "fr": "RugCheck : score de risque {value}.",

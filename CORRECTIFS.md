@@ -1993,3 +1993,48 @@ imposerait d'alerter sans contrôle. **Non modifié, décision laissée à l'uti
 non exclu.
 
 294 tests, 0 échec (260 → 294).
+
+## Mise à jour 39 — Trop d'alertes sans importance et trop de scams : porte d'importance
+
+**Demandé par l'utilisateur** : « les alertes sont trop et sans importance ; il y a trop de scam
+et de rugpull, corrige cela ». C'était la conséquence directe de la Mise à jour 38 : en
+rendant l'alerte précoce possible, elle était émise pour TOUT lancement au contrat « propre »
+(24 alertes en 150 s), sans se demander si le token intéressait qui que ce soit. Un contrat
+propre à la seconde 15 ne dit rien de la valeur d'un token ; le score des VEILLE était en plus
+gonflé (63-87) parce que les critères de marché absents sont ignorés au lieu d'être pénalisés.
+
+**Mesure avant tout changement** (74 lancements vivants) : à 30 s, la MÉDIANE d'achat
+organique est de **0,00 SOL** ; ~7 % seulement des lancements dépassent 3 SOL. Le flux de
+trades de PumpPortal exige une clé financée (0,02 SOL), donc inutilisable ; la traction est
+lue sur l'état ON-CHAIN de la bonding curve (compte d'état pump.fun, gratuit, UN appel RPC
+groupé de 100 curves) : SOL réel dans la curve moins l'achat initial du créateur. Format vérifié
+sur des curves vivantes (réserves virtuelles à t~0 = celles de l'événement de création).
+
+**Ajouté (`core/security_checks.early_traction_verdict`, `config.EARLY_*`)** :
+- **Porte d'importance** : un lancement n'est vérifié (donc alerté) que s'il a au moins
+  `EARLY_MIN_ORGANIC_SOL` = 5 SOL d'acheteurs réels. Les autres ATTENDENT sans aucun appel de
+  vérification (ce qui soulage aussi le RPC) et passent dès qu'ils attirent de vrais acheteurs.
+  Seuil à 5 et non 3 : la distribution est bimodale, et 2 alertes sur 3 étaient marginales
+  (3,3-3,5 SOL) au premier essai à 3 SOL.
+- **Créateur sorti = rejet** : la curve contient moins de 85 % du SOL que le créateur y avait mis
+  (signature de rug, pas de lancement faible). 9 cas en 150 s en test réel.
+- **Traction concentrée = rejet** : moins de 5 porteurs individuels derrière la « traction »
+  (wash trading ou bundle).
+- Une curve pas encore lisible ATTEND (inconnu n'est jamais admis ni rejeté). Un token qui a
+  déjà migré est admis. Ne concerne que les créations PumpPortal : EVM et autres sources inchangés.
+- L'alerte affiche maintenant POURQUOI elle existe : « Traction réelle : 20.5 SOL d'achats
+  organiques, 13 porteurs individuels. » (fr/en/zh, dashboard et Telegram).
+
+**Aucun veto anti-rug relâché ni supprimé** : cette mise à jour n'AJOUTE que des filtres.
+Appliqué au chemin rapide ET au cycle normal.
+
+**Résultat mesuré en direct** : 24 alertes/150 s (Mise à jour 38) -> 3 alertes/150 s (seuil 3 SOL)
+-> **1 alerte pour 117 lancements en 240 s** (seuil 5 SOL), avec 45 lancements écartés/rejetés.
+
+**Réglable** dans `config.py` : `EARLY_MIN_ORGANIC_SOL` (plus haut = moins d'alertes, plus
+sélectives), `EARLY_MIN_HOLDER_ACCOUNTS`, `EARLY_TRACTION_GATE = False` pour tout désactiver.
+
+**Limite honnête** : un créateur qui vend PENDANT que d'autres achent n'est pas visible dans le
+solde de la curve (les deux se compensent) ; seul un flux de trades le montrerait.
+
+316 tests, 0 échec (294 -> 316).

@@ -31,11 +31,12 @@ from chains import solana, bsc, base, ethereum, robinhood, arc
 from core.scoring import compute_score
 from core.security_checks import (
     evaluate_market_prefilter, creator_reputation_veto, is_first_minute_candidate,
-    is_early_candidate,
+    is_early_candidate, early_traction_verdict,
 )
 from core.risk_management import compute_risk_plan
 from core.telegram_alerts import send_alert
 from core import performance_tracker, self_tuning, self_upgrade
+from core.i18n import t
 from data_sources import dexscreener, nansen, goplus, solana_rpc
 from storage import db
 import config as cfg
@@ -506,28 +507,55 @@ class Scanner:
         if not due:
             return
 
-        # 3. UNE sonde groupée : lesquels le RPC voit-il déjà ? Vérifier avant,
+        # 3. PORTE D'IMPORTANCE : on lit l'état des curves de tout le lot en UN appel
+        # groupé. Seuls les lancements qui attirent de vrais acheteurs (et dont le
+        # créateur n'est pas sorti) sont vérifiés ; les autres attendent, sans
+        # aucun appel réseau supplémentaire, jusqu'à FAST_PUMP_MAX_AGE_SECONDS.
+        cand_by_mint = {
+            c["contract"]: c
+            for c in solana.candidates_from_pump_tokens([p["token"] for _m, p in due], sol_price)
+        }
+        solana.annotate_traction(list(cand_by_mint.values()))
+        passing = []
+        for mint, p in due:
+            cand = cand_by_mint.get(mint)
+            if cand is None:   # hors fenêtre de capitalisation : le cycle normal l'écarte aussi
+                del self._fast_pending[mint]
+                self._fast_seen[mint] = now
+                continue
+            verdict, why = early_traction_verdict(cand)
+            if verdict == "reject":
+                del self._fast_pending[mint]
+                self._fast_seen[mint] = now
+                self._remember_rejection("solana", mint, cand)
+                logger.info(f"[solana] {cand.get('ticker', '?')} écarté — {why}")
+            elif verdict == "wait":
+                p["next_at"] = now + retry_s   # on retente bientôt, sans marteler le RPC
+            else:
+                passing.append((mint, p, cand))
+        if not passing:
+            return
+
+        # 4. UNE sonde groupée : lesquels le RPC voit-il déjà ? Vérifier avant,
         # c'est vérifier dans le vide (voir solana_rpc.visible_mints) — donc
         # alerter sans contrôle réel, ce que ce bot ne fait pas.
-        visible = solana_rpc.visible_mints([m for m, _ in due])
+        visible = solana_rpc.visible_mints([m for m, _p, _c in passing])
         ready = []
-        for mint, p in due:
+        for mint, p, cand in passing:
             if mint in visible:
-                ready.append((mint, p))
+                ready.append((mint, p, cand))
             else:
-                p["next_at"] = now + retry_s   # on retente bientôt, sans marteler le RPC
+                p["next_at"] = now + retry_s
 
         if not ready:
             return
-        ready.sort(key=lambda mp: mp[1]["token"]["_received_at"], reverse=True)   # plus frais d'abord
+        ready.sort(key=lambda mpc: mpc[1]["token"]["_received_at"], reverse=True)   # plus frais d'abord
         batch = ready[:max(1, int(getattr(cfg, "FAST_PUMP_BATCH", 6)))]
-        for mint, _p in batch:
+        for mint, _p, _c in batch:
             del self._fast_pending[mint]
             self._fast_seen[mint] = now
 
-        candidates = solana.candidates_from_pump_tokens([p["token"] for _m, p in batch], sol_price)
-        if candidates:
-            self._process_chain("solana", solana, candidates)
+        self._process_chain("solana", solana, [c for _m, _p, c in batch])
 
     def _prune_watchlist(self):
         cutoff = time.time() - cfg.WATCH_REQUEUE_TTL_SECONDS
@@ -602,7 +630,16 @@ class Scanner:
 
     def _process_chain(self, chain: str, module, candidates: list[dict]):
         stats = {"seen": 0, "prefiltered": 0, "rejected": 0, "below": 0, "watch": 0, "signal": 0,
-                 "filtered_age": 0, "skipped_rejected": 0}
+                 "filtered_age": 0, "skipped_rejected": 0, "no_traction": 0}
+
+        # Lecture de l'état des bonding curves en UN appel groupé (Solana/PumpPortal) :
+        # nécessaire à la porte d'importance ci-dessous. Un échec RPC laisse les
+        # candidats "inconnus" (ils attendent), jamais admis ni rejetés à tort.
+        if hasattr(module, "annotate_traction"):
+            try:
+                module.annotate_traction(candidates)
+            except Exception:
+                logger.exception(f"Erreur de lecture des bonding curves sur {chain}.")
 
         fresh: list[dict] = []
         for candidate in candidates:
@@ -622,6 +659,19 @@ class Scanner:
             # encore jamais vus.
             if self._is_recently_rejected(chain, contract):
                 stats["skipped_rejected"] += 1
+                continue
+
+            # Porte d'IMPORTANCE (créations pump.fun) : pas de traction réelle = pas
+            # de vérification réseau, pas d'alerte. Le token est ré-évalué aux
+            # passages suivants et passe dès qu'il attire de vrais acheteurs.
+            verdict, why = early_traction_verdict(candidate)
+            if verdict == "wait":
+                stats["no_traction"] += 1
+                continue
+            if verdict == "reject":
+                stats["prefiltered"] += 1
+                self._remember_rejection(chain, contract, candidate)
+                logger.info(f"[{chain}] {candidate.get('ticker', '?')} écarté — {why}")
                 continue
 
             # --- Préfiltre marché, sans aucun appel réseau ---
@@ -696,6 +746,7 @@ class Scanner:
                 f"{stats['rejected']} rejeté(s) sécurité, {stats['below']} sous le seuil, "
                 f"{stats['filtered_age']} hors filtre d'âge, "
                 f"{stats['skipped_rejected']} déjà rejeté(s) récemment (non revérifiés), "
+                f"{stats['no_traction']} sans traction (non vérifiés), "
                 f"{stats['watch']} en veille, {stats['signal']} signal(aux) validé(s)."
             )
 
@@ -717,6 +768,15 @@ class Scanner:
 
         score = scored["score"]
         tier = scored["tier"]
+
+        # La traction réelle est la raison pour laquelle cette alerte existe : on
+        # l'affiche (dashboard et Telegram) au lieu de la laisser implicite.
+        if candidate.get("organic_sol") is not None:
+            holders = candidate.get("holder_accounts")
+            scored = {**scored, "reasons": [t(
+                "reason.traction", sol=f"{candidate['organic_sol']:.1f}",
+                holders=str(holders) if holders is not None else "?",
+            )] + list(scored.get("reasons") or [])}
 
         if not self._best_candidate_window or score > self._best_candidate_window["score"]:
             self._best_candidate_window = {"ticker": ticker, "chain": chain, "score": score, "tier": tier}

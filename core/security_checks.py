@@ -220,6 +220,15 @@ def evaluate_security(candidate: dict) -> dict:
         vetoes.append(t("veto.insider_network", value=f"{insider_pct:.1f}",
                         max=f"{cfg.MAX_INSIDER_PCT:.0f}"))
 
+    # Traction faite par trop peu de wallets : quelques SOL d'achat concentrés sur
+    # un ou deux comptes, c'est du wash/bundle, pas de l'intérêt. Ne s'applique
+    # qu'aux créations PumpPortal (seules à avoir ce compteur mesuré).
+    holder_accounts = candidate.get("holder_accounts")
+    if (candidate.get("source") == "pumpportal" and holder_accounts is not None
+            and holder_accounts < cfg.EARLY_MIN_HOLDER_ACCOUNTS):
+        vetoes.append(t("veto.few_wallets", value=f"{holder_accounts}",
+                        min=f"{cfg.EARLY_MIN_HOLDER_ACCOUNTS}"))
+
     holder_count = sec.get("holder_count")
     min_holders = cfg.chain_threshold("MIN_HOLDER_COUNT", chain)
     if min_holders and holder_count is not None and holder_count < min_holders:
@@ -317,6 +326,46 @@ def creator_reputation_veto(candidate: dict) -> str | None:
     if flags:
         return t("veto.creator_wallet_flagged", flags=", ".join(flags))
     return None
+
+
+def early_traction_verdict(candidate: dict) -> tuple[str, str | None]:
+    """
+    "Ce lancement mérite-t-il une alerte ?" : porte d'IMPORTANCE des créations
+    pump.fun, sans aucun appel réseau (l'état de la curve est lu en amont par
+    chains.solana.annotate_traction).
+
+    Mesuré en direct : à 30 s, la MÉDIANE d'achat organique (SOL de la curve moins
+    l'achat initial du créateur) est de 0,00 SOL ; ~7 % seulement des lancements
+    dépassent 3 SOL. Alerter tous ceux dont le contrat est "propre" noyait
+    l'utilisateur sous des lancements morts.
+
+    Renvoie ("ok", None), ("wait", motif) : pas assez de traction (pour l'instant)
+    ou curve pas encore lisible, ou ("reject", motif) : signature de scam avérée.
+    Ne s'applique qu'aux candidats PumpPortal encore en bonding curve.
+    """
+    if not getattr(cfg, "EARLY_TRACTION_GATE", False):
+        return "ok", None
+    if candidate.get("source") != "pumpportal" or not candidate.get("is_pump_bonding_curve"):
+        return "ok", None
+
+    real_sol = candidate.get("curve_real_sol")
+    if real_sol is None:
+        return "wait", t("veto.curve_unreadable")
+    if candidate.get("curve_complete"):
+        return "ok", None   # a déjà migré : la traction est faite
+
+    dev_sol = candidate.get("dev_buy_sol") or 0.0
+    # Le créateur a retiré ce qu'il avait mis : la curve contient nettement moins de
+    # SOL que son propre achat. Signature de sortie, pas d'un lancement faible.
+    if (dev_sol >= cfg.EARLY_DEV_EXIT_MIN_DEV_SOL
+            and real_sol < dev_sol * cfg.EARLY_DEV_EXIT_RATIO):
+        return "reject", t("veto.dev_exited", dev=f"{dev_sol:.2f}", now=f"{real_sol:.2f}")
+
+    organic = real_sol - dev_sol
+    if organic < cfg.EARLY_MIN_ORGANIC_SOL:
+        return "wait", t("veto.no_traction", value=f"{max(organic, 0):.2f}",
+                         min=f"{cfg.EARLY_MIN_ORGANIC_SOL:.1f}")
+    return "ok", None
 
 
 def evaluate_market_prefilter(candidate: dict) -> list[str]:
