@@ -433,7 +433,10 @@ def _market_vetoes(candidate: dict, is_bonding_curve: bool, early: bool = False,
         age_h = (time.time() * 1000 - created_ms) / 3_600_000
         max_age_h = cfg.chain_max_pair_age_hours(chain)
         if age_h > max_age_h:
-            vetoes.append(t("veto.pair_too_old", value=f"{age_h:.0f}",
+            # Une décimale sous 10 h : « 6h > 6h » (âge réel 6,3 h arrondi) se
+            # lisait comme un rejet absurde dans les journaux.
+            vetoes.append(t("veto.pair_too_old",
+                            value=f"{age_h:.1f}" if age_h < 10 else f"{age_h:.0f}",
                             max=f"{max_age_h:.0f}"))
 
     return vetoes

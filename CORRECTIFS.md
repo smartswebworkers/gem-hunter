@@ -1885,3 +1885,40 @@ lieu de deux : 1re minute → early (< 60 min) → reste par liquidité.
 plafond d'âge strict et une paire BNB de 50 h est désormais écartée comme sur
 Solana ; en quality, la surcharge EVM reste intacte (c'est sa raison d'être) ;
 le palier « early » passe bien avant un token plus liquide mais plus ancien.
+
+## Mise à jour 36 — Les tokens rejetés étaient re-vérifiés à chaque cycle
+
+**Constaté dans un vrai journal** (pas de question posée, analyse du log fourni).
+
+**Ce que le journal confirme (Mise à jour 35 efficace)** : `SPIKE` (19 896 h, soit
+plus de 2 ans), `SIBYL` (4 549 h), `MALA` (1 066 h), `MEMESPAD`... sont maintenant
+écartés au préfiltre (« Paire trop ancienne ») au lieu d'atteindre le dashboard.
+Ce sont les tokens « vieux de jours ou d'années » signalés par l'utilisateur.
+
+**Anomalie trouvée** : le commentaire de `_process_candidate` dit « veto de sécurité :
+définitif », mais rien ne s'en souvenait. Les mêmes tokens (`.agent`, `RWT`, `VISE`,
+`IshiGo`, `PENGUIN`, `$CAT`...) étaient REJETÉS et re-vérifiés à CHAQUE cycle :
+le flux PumpPortal garde 15 min de créations et DexScreener re-liste les tokens
+boostés. Chaque re-vérification coûte GoPlus + RPC + RugCheck, et surtout elle
+occupait les 25 créneaux par cycle qui devaient aller aux créations fraîches
+jamais vues (le journal montre 12 → 157 candidats « reportés » en 9 cycles) —
+contraire à l'objectif « early dès la création ».
+
+**Corrigé** (`core/scanner.py`, `config.py::REJECTED_RECHECK_SECONDS = 600`) :
+un rejet de sécurité est mémorisé 10 min. **Aucun veto n'est relâché** : le token
+reste rejeté, on évite seulement de le re-tester pendant ce délai, après quoi il
+repasse par toute la chaîne. Le rejet est mémorisé pour les 3 chemins définitifs
+(sécurité, DEX Paid, réputation du créateur), Solana reste sensible à la casse,
+EVM ne l'est pas, et un changement de profil vide la mémoire (les vetos
+dépendent du profil). Le bilan de cycle affiche maintenant « N déjà rejeté(s)
+récemment (non revérifiés) ». `0` désactive la mémoire.
+
+**Cosmétique** : « Paire trop ancienne (6h > 6h) » (âge réel 6,3 h arrondi) affiche
+maintenant une décimale sous 10 h (« 6.3h > 6h »).
+
+**Non modifié, volontairement** : le seuil de score à 60 et « Smart money Nansen
+désactivé » au démarrage correspondent à des réglages de l'interface (la capture
+de l'utilisateur montrait déjà 0.60 et SMART MONEY: OFF) ; rien n'indique un
+changement silencieux, donc rien n'a été touché.
+
+260 tests, 0 échec (250 → 260).

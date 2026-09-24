@@ -1426,6 +1426,81 @@ check(all(e.get("contract") != "OLDSIG1" for e in emitted_age)
 check(_stats_sig_age["filtered_age"] == 1,
       "Le SIGNAL masqué par le filtre d'âge est bien compté à part (pas confondu avec 'sous le seuil')")
 
+# --- 12e-ter. Mémoire des rejets de sécurité (pas de re-vérification à chaque cycle) ---
+# Mesuré sur un vrai journal : « .agent », « RWT », « VISE » rejetés à CHAQUE
+# cycle, et ces re-vérifications occupaient les créneaux dus aux tokens frais.
+_sc_rej = Scanner(ScannerState())
+_sc_rej.state.running = True
+_prev_ttl = config.REJECTED_RECHECK_SECONDS
+config.REJECTED_RECHECK_SECONDS = 600
+try:
+    check(_sc_rej._is_recently_rejected("solana", "MintAAA") is False,
+          "Rejets : un token jamais rejeté n'est pas marqué")
+    _sc_rej._remember_rejection("solana", "MintAAA")
+    check(_sc_rej._is_recently_rejected("solana", "MintAAA") is True,
+          "Rejets : un token rejeté n'est pas re-vérifié pendant le délai")
+    check(_sc_rej._is_recently_rejected("solana", "minta aa".replace(" ", "")) is False,
+          "Rejets : les adresses Solana restent sensibles à la casse")
+    check(_sc_rej._is_recently_rejected("bsc", "MintAAA") is False,
+          "Rejets : la mémoire est propre à chaque chaîne")
+    _sc_rej._remember_rejection("bsc", "0xAbC")
+    check(_sc_rej._is_recently_rejected("bsc", "0xabc") is True,
+          "Rejets : les adresses EVM sont comparées sans tenir compte de la casse")
+
+    # Expiration : passé le délai, le token repasse par toute la chaîne de vérification.
+    _sc_rej._rejected[("solana", "MintAAA")] = time.time() - 601
+    check(_sc_rej._is_recently_rejected("solana", "MintAAA") is False
+          and ("solana", "MintAAA") not in _sc_rej._rejected,
+          "Rejets : après le délai, le token est re-vérifié (le rejet n'est pas éternel)")
+
+    # Un rejet réel de _process_candidate alimente la mémoire.
+    import core.scanner as _sc_rej_mod
+    _orig_cs_rej = _sc_rej_mod.compute_score
+    try:
+        _sc_rej_mod.compute_score = lambda cand: {**cand, "rejected": True, "score": 0,
+                                                  "reasons": ["Concentration excessive"], "tier": None}
+        _st_rej = {"rejected": 0}
+        _sc_rej._process_candidate("solana", {"contract": "MintRug", "ticker": "RUG"}, _st_rej)
+    finally:
+        _sc_rej_mod.compute_score = _orig_cs_rej
+    check(_st_rej["rejected"] == 1 and _sc_rej._is_recently_rejected("solana", "MintRug"),
+          "Rejets : un veto de sécurité est mémorisé par _process_candidate")
+
+    # Le cycle saute les tokens récemment rejetés au lieu de les ré-enrichir.
+    _enriched_seen: list = []
+    class _FakeMod:
+        def enrich_batch(self, cands, should_stop=None):
+            _enriched_seen.extend(c["contract"] for c in cands)
+            return cands
+    _orig_cs2 = _sc_rej_mod.compute_score
+    _orig_mpf = _sc_rej_mod.evaluate_market_prefilter
+    try:
+        _sc_rej_mod.compute_score = lambda cand: {**cand, "rejected": True, "score": 0,
+                                                  "reasons": ["x"], "tier": None}
+        _sc_rej_mod.evaluate_market_prefilter = lambda cand: []
+        _sc_rej._process_chain("solana", _FakeMod(),
+                               [{"contract": "MintRug", "ticker": "RUG"},
+                                {"contract": "MintFresh", "ticker": "NEW"}])
+    finally:
+        _sc_rej_mod.compute_score = _orig_cs2
+        _sc_rej_mod.evaluate_market_prefilter = _orig_mpf
+    check(_enriched_seen == ["MintFresh"],
+          "Rejets : le token déjà rejeté n'est pas ré-enrichi, le token frais l'est",
+          f"-> {_enriched_seen}")
+
+    # Changer de profil invalide les verdicts (les vetos dépendent du profil).
+    _sc_rej.set_scan_profile("degen")
+    check(_sc_rej._is_recently_rejected("solana", "MintRug") is False,
+          "Rejets : un changement de profil vide la mémoire des rejets")
+
+    # 0 = désactivé (comportement d'origine : re-vérification à chaque cycle).
+    config.REJECTED_RECHECK_SECONDS = 0
+    _sc_rej._remember_rejection("solana", "MintOff")
+    check(_sc_rej._is_recently_rejected("solana", "MintOff") is False,
+          "Rejets : REJECTED_RECHECK_SECONDS = 0 désactive la mémoire")
+finally:
+    config.REJECTED_RECHECK_SECONDS = _prev_ttl
+
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch
 # (jusqu'à 3 s/appel × 3 appels × 25 tokens sous 429). should_stop l'y coupe.

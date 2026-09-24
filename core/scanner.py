@@ -152,6 +152,10 @@ class Scanner:
         # File de promotion : contrat -> {chain, first_seen, watch_signal_id}
         self._watchlist: dict[str, dict] = {}
         self._watchlist_lock = threading.Lock()
+        # Mémoire des rejets de sécurité définitifs : (chaîne, contrat) -> instant
+        # du rejet. Voir _remember_rejection().
+        self._rejected: dict[tuple[str, str], float] = {}
+        self._rejected_lock = threading.Lock()
 
     # --- Contrôles exposés à l'interface ---
     def _is_stopping(self) -> bool:
@@ -222,6 +226,11 @@ class Scanner:
         config.py sont réécrites à chaud ; le scanner les relit à chaque cycle.
         """
         applied = cfg.apply_profile(name)
+        # Les vetos dépendent du profil (ex. nombre de porteurs minimum : 50 en
+        # degen, 300 en quality) : un rejet prononcé sous l'autre profil n'a plus
+        # valeur de verdict.
+        with self._rejected_lock:
+            self._rejected.clear()
         logger.info(
             f"Profil de scan : {applied.upper()} — "
             f"{'flux pump.fun coupé, découverte par traction, seul le SIGNAL vérifié est publié' if applied == 'quality' else 'flux pump.fun actif, VEILLE précoce affichée'}."
@@ -315,6 +324,48 @@ class Scanner:
         logger.info(
             f"Chaînes actives : {', '.join(sorted(self.state.active_chains)) or 'aucune'}."
         )
+
+    # --- Mémoire des rejets de sécurité ---
+    # Le commentaire de _process_candidate dit « veto de sécurité : définitif »,
+    # mais rien ne s'en souvenait : un token rejeté revenait à chaque cycle (le
+    # flux PumpPortal garde 15 min de créations, DexScreener re-liste les mêmes
+    # tokens boostés) et était re-vérifié à chaque fois — GoPlus, RPC et RugCheck
+    # pour un verdict déjà connu. Mesuré sur un vrai journal : « .agent », « RWT »,
+    # « VISE », « IshiGo » rejetés à CHAQUE cycle, et ces re-vérifications
+    # occupaient les 25 créneaux par cycle qui auraient dû aller aux créations
+    # les plus fraîches encore jamais vues (150+ tokens reportés). Un rejet est
+    # donc mémorisé REJECTED_RECHECK_SECONDS : ça ne relâche AUCUN veto (le token
+    # reste rejeté), ça évite seulement de le re-tester pendant ce délai, après
+    # quoi il repasse par toute la chaîne de vérification.
+    @staticmethod
+    def _rejection_key(chain: str, contract: str) -> tuple[str, str]:
+        # Les adresses Solana sont sensibles à la casse ; les adresses EVM
+        # arrivent en casse variable selon la source (checksum ou minuscules).
+        return (chain, contract if chain == "solana" else contract.lower())
+
+    def _remember_rejection(self, chain: str, contract: str | None):
+        ttl = getattr(cfg, "REJECTED_RECHECK_SECONDS", 0)
+        if not contract or ttl <= 0:
+            return
+        now = time.time()
+        with self._rejected_lock:
+            self._rejected[self._rejection_key(chain, contract)] = now
+            if len(self._rejected) > 5000:   # borne mémoire sur une longue session
+                self._rejected = {k: v for k, v in self._rejected.items() if now - v < ttl}
+
+    def _is_recently_rejected(self, chain: str, contract: str | None) -> bool:
+        ttl = getattr(cfg, "REJECTED_RECHECK_SECONDS", 0)
+        if not contract or ttl <= 0:
+            return False
+        key = self._rejection_key(chain, contract)
+        with self._rejected_lock:
+            rejected_at = self._rejected.get(key)
+            if rejected_at is None:
+                return False
+            if time.time() - rejected_at >= ttl:
+                del self._rejected[key]
+                return False
+            return True
 
     def get_watchlist(self) -> list[dict]:
         with self._watchlist_lock:
@@ -431,7 +482,7 @@ class Scanner:
 
     def _process_chain(self, chain: str, module, candidates: list[dict]):
         stats = {"seen": 0, "prefiltered": 0, "rejected": 0, "below": 0, "watch": 0, "signal": 0,
-                 "filtered_age": 0}
+                 "filtered_age": 0, "skipped_rejected": 0}
 
         fresh: list[dict] = []
         for candidate in candidates:
@@ -444,6 +495,13 @@ class Scanner:
             # publié en VEILLE, lui, reste candidat à la promotion : c'est tout
             # l'intérêt de la file de suivi.
             if db.has_recent_signal(chain, contract, tier=cfg.TIER_SIGNAL):
+                continue
+
+            # Déjà rejeté sur la sécurité il y a peu : pas de re-vérification (voir
+            # _remember_rejection). Libère les créneaux du cycle pour des tokens
+            # encore jamais vus.
+            if self._is_recently_rejected(chain, contract):
+                stats["skipped_rejected"] += 1
                 continue
 
             # --- Préfiltre marché, sans aucun appel réseau ---
@@ -516,6 +574,7 @@ class Scanner:
                 f"{stats['prefiltered']} écarté(s) sur critères de marché, "
                 f"{stats['rejected']} rejeté(s) sécurité, {stats['below']} sous le seuil, "
                 f"{stats['filtered_age']} hors filtre d'âge, "
+                f"{stats['skipped_rejected']} déjà rejeté(s) récemment (non revérifiés), "
                 f"{stats['watch']} en veille, {stats['signal']} signal(aux) validé(s)."
             )
 
@@ -529,6 +588,7 @@ class Scanner:
             stats["rejected"] += 1
             with self._watchlist_lock:
                 self._watchlist.pop(contract, None)
+            self._remember_rejection(chain, contract)
             logger.info(
                 f"[{chain}] {ticker} REJETÉ — {'; '.join(scored['reasons'][:3]) or 'raison inconnue'}"
             )
@@ -564,6 +624,7 @@ class Scanner:
             candidate["dex_paid"] = dexscreener.check_dex_paid(chain, contract)
             if candidate["dex_paid"] is True:
                 stats["rejected"] += 1
+                self._remember_rejection(chain, contract)
                 logger.info(f"[{chain}] {ticker} REJETÉ — déjà DEX Paid, hors cible.")
                 return
 
@@ -582,6 +643,7 @@ class Scanner:
                 stats["rejected"] += 1
                 with self._watchlist_lock:
                     self._watchlist.pop(contract, None)
+                self._remember_rejection(chain, contract)
                 logger.info(f"[{chain}] {ticker} REJETÉ — {veto}")
                 return
 

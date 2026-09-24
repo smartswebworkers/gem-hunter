@@ -96,6 +96,14 @@ WATCH_MAX_TRACKED = 500               # borne mémoire de la file de veille
 # il en a le plus besoin.
 MAX_ENRICHMENTS_PER_CYCLE = 25
 
+# Durée pendant laquelle un token REJETÉ sur la sécurité n'est pas re-vérifié
+# (secondes). Ne relâche aucun veto : le token reste rejeté, on évite seulement
+# de repayer GoPlus/RPC/RugCheck à chaque cycle pour un verdict déjà connu, et
+# de gaspiller les MAX_ENRICHMENTS_PER_CYCLE créneaux qui doivent aller aux
+# tokens frais jamais vus. Passé ce délai, le token repasse par toute la chaîne.
+# 0 = désactivé (re-vérification à chaque cycle, comportement d'origine).
+REJECTED_RECHECK_SECONDS = 600
+
 # =============================================================================
 # CRITÈRES DE MARCHÉ
 # =============================================================================
