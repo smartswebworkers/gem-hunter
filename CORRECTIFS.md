@@ -1922,3 +1922,21 @@ de l'utilisateur montrait déjà 0.60 et SMART MONEY: OFF) ; rien n'indique un
 changement silencieux, donc rien n'a été touché.
 
 260 tests, 0 échec (250 → 260).
+
+## Mise à jour 37 — Cartes toujours classées par ordre de temps
+
+**Demandé par l'utilisateur** : « il faut que les alertes soient affichées par ordre de temps ».
+
+**Cause du désordre** : chaque carte était insérée en TÊTE de la grille (`insertBefore(firstChild)`).
+Au chargement (redémarrage, changement de langue) la base renvoie les signaux du plus
+récent au plus ancien, donc l'ordre s'INVERSAIT (le plus ancien en haut) ; et une carte
+réaffichée après un changement de curseur/filtre passait devant les autres.
+
+**Corrigé** (`gui/web/index.html::insertCardSorted`) : les cartes sont classées du plus
+récent (haut) au plus ancien (bas), quel que soit l'ordre d'arrivée ou de chargement.
+Le classement suit l'instant affiché dans le badge d'âge (âge réel du token, ou heure
+de détection quand aucune pool n'est indexée — Mise à jour 33), pour que l'ordre à
+l'écran corresponde exactement à ce que la carte annonce. Vérifié par simulation :
+même résultat en chargeant dans l'ordre croissant, décroissant ou en direct.
+
+Aucune logique de scan, de sécurité ni de score modifiée. 260 tests Python, 0 échec.

@@ -726,13 +726,35 @@ function passesFilters(sig){
   return passesScore(sig) && passesAge(sig);
 }
 
+// Les cartes sont TOUJOURS classées par ordre de temps, du plus récent (haut)
+// au plus ancien (bas), sur l'instant affiché dans leur badge d'âge (âge réel du
+// token, ou heure de détection à défaut — voir tokenAgeInfo). Avant, chaque carte
+// était insérée en tête : au chargement (redémarrage, changement de langue) la
+// base renvoie les signaux du plus récent au plus ancien, ce qui INVERSAIT
+// l'ordre, et une carte réaffichée par un filtre passait devant les autres.
+function insertCardSorted(el, sig){
+  const grid = document.getElementById("cardsGrid");
+  const epoch = tokenAgeInfo(sig).epochMs;
+  el.dataset.sortEpoch = epoch;
+  el.dataset.sortId = Number(sig.id) || 0;
+  for(const other of grid.querySelectorAll(".card")){
+    const otherEpoch = parseFloat(other.dataset.sortEpoch);
+    const otherId = parseFloat(other.dataset.sortId) || 0;
+    // plus récent d'abord ; à instant égal, le signal enregistré en dernier
+    if(epoch > otherEpoch || (epoch === otherEpoch && el.dataset.sortId > otherId)){
+      grid.insertBefore(el, other);
+      return;
+    }
+  }
+  grid.insertBefore(el, document.getElementById("emptyState"));  // le plus ancien : en bas
+}
+
 function addSignal(sig){
   if(sig && sig.id != null) signalData.set(sig.id, sig);  // on conserve toujours la donnée
   if(cards.has(sig.id)) return;
   if(!passesFilters(sig)) return;                          // sous le curseur ou hors filtre d'âge : masqué
-  const grid = document.getElementById("cardsGrid");
   const el = renderCard(sig);
-  grid.insertBefore(el, grid.firstChild);
+  insertCardSorted(el, sig);
   cards.set(sig.id, el);
   applyFilter();
   refreshAllAges();   // âge exact dès l'affichage, pas seulement au prochain tick des 15s
@@ -749,11 +771,10 @@ function reconcileCardsWithFilters(){
       cards.delete(id);
     }
   }
-  const grid = document.getElementById("cardsGrid");
   for(const [id, sig] of signalData){
     if(!cards.has(id) && passesFilters(sig)){
       const el = renderCard(sig);
-      grid.insertBefore(el, grid.firstChild);
+      insertCardSorted(el, sig);
       cards.set(id, el);
     }
   }
