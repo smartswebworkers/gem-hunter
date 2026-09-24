@@ -66,15 +66,20 @@ NANSEN_LINK_CHAIN_MAP = {
 
 # Binance Web3 : pages /en/token/<chaîne>/<contrat>. Robinhood Chain n'y est
 # pas listée — on n'ajoute alors pas le lien plutôt que d'en produire un mort.
-# Arc Network (Circle, chain ID 5042) non plus : aucune source ne confirme que
-# Binance Web3 y ouvre une page token. « ARC-20 » que Binance a intégré est un
-# standard de tokens Bitcoin (Atomicals Protocol) sans aucun rapport avec Arc
-# Network — une fausse piste à ne pas confondre.
+# "arc" ajouté le 24/09/2026, vérifié en ouvrant réellement une page Arc
+# (/en/token/arc/<contrat>, sur ARGUS) : Binance Web3 y affiche de vraies
+# données de marché (prix, liquidité, holders, audit) et promeut même le
+# trading sur Arc en direct sur la page — couverture confirmée, pas supposée.
+# (« ARC-20 » que Binance a intégré par ailleurs est un standard de tokens
+# Bitcoin — Atomicals Protocol — sans rapport avec Arc Network ; à ne pas
+# confondre, mais ce n'est plus la question ici : la page Arc existe bel et
+# bien sous ce code chaîne.)
 BINANCE_WEB3_CHAIN_MAP = {
     "solana": "solana",
     "bsc": "bsc",
     "base": "base",
     "ethereum": "ethereum",
+    "arc": "arc",
 }
 
 

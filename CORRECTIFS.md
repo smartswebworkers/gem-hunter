@@ -1822,3 +1822,23 @@ exactes, pas de décalage ».
 247 tests, 0 échec (244 → 247) : `pair_created_at` survit à l'aller-retour en
 base (insert + relecture directe + liste `get_active_signals`), et reste
 `NULL` (jamais inventé) quand la donnée n'existe pas.
+
+## Mise à jour 34 — Le lien Binance Web3 manquait pour Arc (les 3 liens sont confirmés)
+
+**Demandé par l'utilisateur** : avoir les 3 liens (Axiom, Nansen, Binance Web3) sur
+les alertes Arc, pas seulement Nansen + Axiom comme depuis la Mise à jour 31.
+
+À l'époque, Binance Web3 n'avait pas été ajouté par prudence : aucune preuve
+que la chaîne y avait une page token, et « ARC-20 » (un standard de tokens
+Bitcoin sans rapport) brouillait la recherche. **Vérifié cette fois en ouvrant
+réellement une page Arc** (`web3.binance.com/en/token/arc/<contrat>`, sur le
+token ARGUS) plutôt qu'en devinant : la page existe, affiche de vraies données
+de marché (prix, liquidité, holders, audit) et Binance y fait même la
+promotion du trading sur Arc en direct. Couverture confirmée, pas supposée.
+
+`BINANCE_WEB3_CHAIN_MAP` (`core/telegram_alerts.py`) a donc désormais `"arc": "arc"`.
+Les alertes Telegram et la fiche détail du dashboard pour Arc affichent
+maintenant les 3 liens (Axiom, Nansen, Binance Web3), comme pour Solana/BSC/Base/Ethereum.
+
+247 tests, 0 échec : le test qui vérifiait explicitement l'ABSENCE de Binance
+Web3 pour Arc est remplacé par un test qui vérifie la présence des 3 liens.

@@ -649,9 +649,9 @@ check("app.nansen.ai" in _lk_rh and "chain=robinhood" in _lk_rh
 _lk_arc = _build_links({"chain": "arc", "contract": "0xARC"})
 check("axiom.trade/t/0xARC/@hunter212?chain=arc" in _lk_arc
       and "app.nansen.ai/token-god-mode?tokenAddress=0xARC&chain=arc" in _lk_arc
-      and "web3.binance.com" not in _lk_arc,
-      "Telegram : Arc a les liens Axiom + Nansen (couverture confirmee) mais PAS "
-      "Binance Web3 (aucune couverture confirmee pour Arc Network)",
+      and "web3.binance.com/en/token/arc/0xARC" in _lk_arc,
+      "Telegram : Arc cumule les 3 liens (Axiom + Nansen + Binance Web3, "
+      "couverture confirmee en direct pour les trois)",
       f"-> {_lk_arc!r}")
 check("0xABC" in _build_links({"chain": "base", "contract": "0xABC"})
       and _build_links({"chain": "bsc", "contract": ""}) == "",
