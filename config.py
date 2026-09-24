@@ -103,6 +103,28 @@ MAX_ENRICHMENTS_PER_CYCLE = 25
 # tokens frais jamais vus. Passé ce délai, le token repasse par toute la chaîne.
 # 0 = désactivé (re-vérification à chaque cycle, comportement d'origine).
 REJECTED_RECHECK_SECONDS = 600
+# Pour un token « early » (première minute, bonding curve, < fenêtre early), le
+# verdict n'est PAS stable — rejeté à la seconde 3 car son créateur est seul
+# porteur, il peut être distribué à la minute 2. Ces tokens sont donc re-testés
+# presque à chaque passage plutôt que mis de côté 10 min.
+REJECTED_RECHECK_EARLY_SECONDS = 20
+
+# --- Chemin rapide PumpPortal : alerte dans les premières secondes -----------
+# Le flux PumpPortal pousse chaque création pump.fun en quelques millisecondes,
+# mais elle n'était traitée qu'au PROCHAIN CYCLE DE SCAN : le cycle passe par
+# toutes les chaînes (Solana en dernier), vérifie jusqu'à 25 tokens à la suite
+# puis attend SCAN_INTERVAL_SECONDS — soit couramment plus d'une minute entre la
+# création et l'alerte. Un thread dédié réagit maintenant en FAST_PUMP_POLL_SECONDS
+# à chaque nouvelle création, indépendamment du cycle. Il passe par EXACTEMENT
+# le même pipeline (préfiltre, vérification RPC/GoPlus/RugCheck, vetos, score,
+# curseur, filtre d'âge) : aucun contrôle n'est contourné, seule l'attente disparaît.
+FAST_PUMP_PATH = True
+FAST_PUMP_POLL_SECONDS = 1.0
+FAST_PUMP_MIN_AGE_SECONDS = 2      # âge minimal avant la première sonde
+FAST_PUMP_RETRY_SECONDS = 2        # délai entre deux sondes d'un mint pas encore visible du RPC
+                                   # (une sonde GROUPÉE par passage : pas de rafale d'appels)
+FAST_PUMP_MAX_AGE_SECONDS = 90     # au-delà, le cycle normal prend le relais
+FAST_PUMP_BATCH = 6                # créations traitées par passage (les plus fraîches d'abord)
 
 # =============================================================================
 # CRITÈRES DE MARCHÉ

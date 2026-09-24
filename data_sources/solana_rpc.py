@@ -268,7 +268,30 @@ def _parse_mint_account(account: dict | None) -> dict | None:
     }
 
 
-def get_holder_concentration(mint_address: str, top_n: int = 10) -> dict | None:
+def visible_mints(mint_addresses: list[str]) -> set[str]:
+    """
+    Parmi ces mints, ceux que le RPC connaît DÉJÀ. Un seul appel groupé
+    (getMultipleAccounts) pour tout le lot. Sert au chemin rapide : le flux
+    PumpPortal annonce une création en quelques ms, mais mesuré sur des tokens
+    vivants le RPC ne voit souvent le mint qu'après plusieurs secondes
+    (« not a Token mint », supply et porteurs introuvables). Vérifier avant ce
+    moment donnerait un dossier VIDE — donc une alerte sans aucun contrôle réel.
+    On attend donc que le mint soit lisible, puis on vérifie pour de bon.
+    """
+    unique = list(dict.fromkeys(a for a in mint_addresses if a))
+    if not unique:
+        return set()
+    prefetch_mint_authorities(unique)
+    now = time.time()
+    return {
+        m for m in unique
+        if m in _mint_cache and _mint_cache[m][1] is not None
+        and now - _mint_cache[m][0] < _MINT_CACHE_TTL
+    }
+
+
+def get_holder_concentration(mint_address: str, top_n: int = 10,
+                             exclude_owners: set[str] | None = None) -> dict | None:
     """
     Concentration réelle de l'offre, lue on-chain via getTokenLargestAccounts.
 
@@ -280,6 +303,12 @@ def get_holder_concentration(mint_address: str, top_n: int = 10) -> dict | None:
     C'est la vérification qui manquait le plus : sur un token de moins d'une
     heure, aucun indexeur ne connaît encore la liste des porteurs, alors que
     le RPC la donne immédiatement.
+
+    `exclude_owners` : wallets à ne pas compter comme des porteurs — en pratique
+    la clé de la bonding curve (`bondingCurveKey`), fournie avec CHAQUE création
+    par le flux PumpPortal. C'est l'identification exacte de la curve : la
+    détection par programme propriétaire ne suffit pas (mesuré : certaines curves
+    ont un PDA possédé par le programme système, d'autres pas de compte du tout).
     """
     result, _ok = _call("getTokenLargestAccounts", [mint_address, {"commitment": "confirmed"}])
     if not result or not isinstance(result.get("value"), list):
@@ -312,11 +341,25 @@ def get_holder_concentration(mint_address: str, top_n: int = 10) -> dict | None:
     denominator = supply if supply and supply > 0 else total
 
     owners = _resolve_account_owners([a for a, _ in amounts])
+    # CORRECTIF — la comparaison ci-dessus ne voyait QUE le premier niveau : le
+    # propriétaire d'un compte de token est un wallet, et celui de la bonding
+    # curve pump.fun est un PDA propre à chaque token, PAS l'ID du programme.
+    # `owner in _KNOWN_PROGRAM_OWNERS` ne pouvait donc jamais être vrai pour une
+    # curve, qui était comptée comme un « gros porteur » (50 à 99 % de l'offre sur
+    # un token neuf) — d'où des « un seul wallet détient 100 % » sur presque tout
+    # ce que remontait PumpPortal, et zéro alerte précoce. Vérifié sur des tokens
+    # vivants de 22 s : le wallet de la curve est possédé par 6EF8rr… (pump.fun).
+    # Le second niveau (programme propriétaire du wallet) réalise enfin ce que
+    # le commentaire de cette fonction annonce.
+    programs = _resolve_account_programs(sorted({o for o in owners.values() if o}))
 
     individual = []
     for address, amount in amounts:
         owner = owners.get(address)
-        if owner and owner in _KNOWN_PROGRAM_OWNERS:
+        if owner and exclude_owners and owner in exclude_owners:
+            continue  # la bonding curve, identifiée exactement par le flux PumpPortal
+        if owner and (owner in _KNOWN_PROGRAM_OWNERS
+                      or programs.get(owner) in _KNOWN_PROGRAM_OWNERS):
             continue  # bonding curve ou pool AMM, pas un porteur individuel
         individual.append(amount)
 
@@ -356,6 +399,34 @@ def _resolve_account_owners(addresses: list[str]) -> dict[str, str]:
         except (KeyError, TypeError):
             continue
     return owners
+
+
+# Programme propriétaire d'un compte (adresse -> programme, ou None si le compte
+# n'existe pas). Stable dans le temps, donc mis en cache : le wallet partagé de
+# certains tokens revient sur des dizaines de mints.
+_program_cache: dict[str, str | None] = {}
+_PROGRAM_CACHE_MAX = 5000
+
+
+def _resolve_account_programs(addresses: list[str]) -> dict[str, str | None]:
+    """
+    Programme propriétaire de chaque compte, en un seul appel groupé. Un échec
+    RPC ne met rien en cache et renvoie ce qu'on sait déjà : l'appelant retombe
+    alors sur le comportement d'avant (compte traité comme un porteur), jamais
+    sur une exclusion à tort.
+    """
+    if not addresses:
+        return {}
+    todo = [a for a in addresses if a not in _program_cache][:100]
+    if todo:
+        result, _ok = _call("getMultipleAccounts", [todo, {"encoding": "jsonParsed"}])
+        values = result.get("value") if isinstance(result, dict) else None
+        if isinstance(values, list):
+            if len(_program_cache) > _PROGRAM_CACHE_MAX:
+                _program_cache.clear()
+            for address, account in zip(todo, values):
+                _program_cache[address] = account.get("owner") if isinstance(account, dict) else None
+    return {a: _program_cache[a] for a in addresses if a in _program_cache}
 
 
 def get_creator_holding_pct(mint_address: str, creator_address: str) -> float | None:

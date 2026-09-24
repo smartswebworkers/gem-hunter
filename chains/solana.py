@@ -47,9 +47,19 @@ def _prefilter_liquidity() -> float:
 
 
 def _from_pumpportal(sol_price_usd: float) -> list[dict]:
-    candidates = []
     window = getattr(cfg, "PUMP_RECENT_WINDOW_SECONDS", 900)
-    for token in pumpportal.get_recent_tokens(max_age_seconds=window):
+    return candidates_from_pump_tokens(
+        pumpportal.get_recent_tokens(max_age_seconds=window), sol_price_usd)
+
+
+def candidates_from_pump_tokens(tokens: list[dict], sol_price_usd: float) -> list[dict]:
+    """
+    Candidats à partir de créations PumpPortal. Partagé par la découverte du
+    cycle normal et par le chemin rapide (core/scanner.py::_fast_pump_tick),
+    pour que les deux appliquent exactement la même fenêtre de capitalisation.
+    """
+    candidates = []
+    for token in tokens:
         market_cap_sol = token.get("marketCapSol")
         if market_cap_sol is None:
             continue
@@ -74,6 +84,10 @@ def _from_pumpportal(sol_price_usd: float) -> list[dict]:
             "volume_1h": None,
             "price_usd": price_usd,
             "creator": token.get("traderPublicKey"),
+            # Clé de la bonding curve fournie par PumpPortal : permet d'exclure
+            # exactement la curve du calcul de concentration (voir
+            # solana_rpc.get_holder_concentration).
+            "bonding_curve": token.get("bondingCurveKey"),
             # Correctif : plus de `or True`. Un token dont le champ pool est
             # absent ou inconnu est traité comme une bonding curve par défaut,
             # ce qui est le choix prudent puisque PumpPortal ne diffuse que des
@@ -200,7 +214,9 @@ def enrich_with_security(candidate: dict) -> dict:
     elif not sec.get("data_available"):
         sec["unavailable_reason"] = t("unavailable.solana_no_source")
 
-    concentration = solana_rpc.get_holder_concentration(contract)
+    curve = candidate.get("bonding_curve")
+    concentration = solana_rpc.get_holder_concentration(
+        contract, exclude_owners={curve} if curve else None)
     if concentration is not None:
         # On garde la mesure la plus défavorable entre l'indexeur et la lecture
         # on-chain : si les deux divergent, c'est presque toujours que l'indexeur
@@ -230,9 +246,18 @@ def enrich_with_security(candidate: dict) -> dict:
         if rug.get("lp_locked_pct") is not None and sec.get("lp_locked_pct") is None:
             sec["lp_locked_pct"] = rug["lp_locked_pct"]
             sec["lp_data_available"] = True
-        if rug.get("top_holder_pct") is not None:
+        rug_top = rug.get("top_holder_pct")
+        if curve:
+            # RugCheck range la bonding curve parmi ses « top holders » (62-98 % de
+            # l'offre sur un token neuf) : fusionné par max() avec la mesure RPC,
+            # qui EXCLUT la curve, il écrasait un 1 % réel par un faux 100 % —
+            # d'où ~90 % des rejets « concentration excessive ». On recalcule donc
+            # son chiffre SANS la curve : les deux sources redeviennent comparables
+            # et le max() garde son rôle (la mesure la plus défavorable).
+            rug_top = rugcheck.top_holder_pct_excluding(rug.get("holders"), {curve})
+        if rug_top is not None:
             existing = sec.get("top10_holder_pct")
-            sec["top10_holder_pct"] = rug["top_holder_pct"] if existing is None else max(existing, rug["top_holder_pct"])
+            sec["top10_holder_pct"] = rug_top if existing is None else max(existing, rug_top)
         insider_pct = rug.get("insider_pct")
         if insider_pct is not None:
             candidate["insider_pct"] = insider_pct

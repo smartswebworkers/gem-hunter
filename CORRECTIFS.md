@@ -1940,3 +1940,56 @@ l'écran corresponde exactement à ce que la carte annonce. Vérifié par simula
 même résultat en chargeant dans l'ordre croissant, décroissant ou en direct.
 
 Aucune logique de scan, de sécurité ni de score modifiée. 260 tests Python, 0 échec.
+
+## Mise à jour 38 — Alertes dès les premières secondes (2 bugs de mesure + chemin rapide)
+
+**Demandé par l'utilisateur** : « je veux avoir les alertes des tokens dès les premières
+secondes, arrête de poser des limites ».
+
+**Constat mesuré en direct, sur le flux PumpPortal réel** : 0 alerte précoce, alors que le
+bot voyait 15-20 créations par cycle. Deux causes indépendantes, plus une latence.
+
+**1. La bonding curve était comptée comme un « gros porteur »** (`data_sources/solana_rpc.py`).
+`get_holder_concentration` exclut les comptes de programmes connus, mais ne regardait que le
+premier niveau : le propriétaire du compte de token de la curve est un PDA propre à chaque
+token, pas l'ID du programme. Résultat : la curve (50-99 % de l'offre sur un token neuf)
+déclenchait « un seul wallet détient 100 % ». Corrigé de deux façons complémentaires :
+programme propriétaire du PDA (2e niveau, mis en cache) ET `bondingCurveKey` fourni avec
+chaque création par PumpPortal (identification exacte, y compris les curves à PDA
+système que la détection par programme ne voit pas).
+
+**2. RugCheck comptait aussi la curve** (`chains/solana.py`, `data_sources/rugcheck.py`).
+Son `top_holder_pct` (95-100 %) était fusionné par `max()` avec la mesure RPC correcte et
+l'écrasait : `Ucubes` valait 1,05 % en RPC et 100 % après fusion. Vérifié sur des rapports
+réels (la curve y figure à 62-98 % sous la même clé). Le chiffre est maintenant recalculé
+SANS la curve. Les avertissements textuels de RugCheck ne sont pas touchés (ils ne se
+déclenchaient pas à tort sur ces curves).
+
+**3. Latence : le chemin rapide** (`core/scanner.py::_fast_pump_tick`, `config.py::FAST_PUMP_*`).
+Une création arrivait en millisecondes mais attendait le prochain CYCLE (toutes les
+chaînes, 25 vérifications à la suite, puis 45 s d'attente : couramment plus d'une minute).
+Un thread dédié réagit maintenant à chaque création, par le MÊME pipeline (préfiltre,
+vérification, vetos, score, curseur, filtre d'âge). Un token n'est vérifié que lorsque le RPC
+voit son mint (une sonde groupée par passage, `visible_mints`) : vérifier avant donnerait un
+dossier vide, donc une alerte sans aucun contrôle. Publication sérialisée (pas de doublon
+avec le cycle normal). La mémoire des rejets (Mise à jour 36) devient dépendante de l'âge :
+un token neuf rejeté à la seconde 3 est re-testé vite, seul un token établi garde 10 min.
+
+**Résultat mesuré (150 s, flux réel, base temporaire, Telegram coupé)** : 24 alertes VEILLE,
+émises 14 à 27 s après la création (0 avant), et 41 tokens rejetés pour de vrais motifs
+(20 créateurs avec historique de rug selon RugCheck, mint authority active, métadonnées
+modifiables, dev à 79 %...). Aucun veto de sécurité n'a été relâché ni supprimé.
+
+**Hors périmètre, sécurité des journaux** : la clé API Helius apparaissait EN CLAIR dans les
+messages d'erreur réseau (console, panneau LOG, journaux collés pour demander de l'aide).
+Toute valeur de paramètre `api-key`/`token`/`secret`... est maintenant masquée
+(`http_utils._redact`), y compris dans le texte des exceptions.
+
+**Limite honnête** : « premières secondes » signifie ~15-25 s en pratique, borné par le
+délai avant que le RPC voie le mint et par les vérifications réelles ; descendre plus bas
+imposerait d'alerter sans contrôle. **Non modifié, décision laissée à l'utilisateur** : environ
+1 token sur 10 est rejeté parce qu'un wallet PARTAGÉ (BwWK17…, ~50 % de l'offre sur les tokens
+« mayhem mode » de pump.fun) est vu comme un seul gros porteur ; identité non confirmée, donc
+non exclu.
+
+294 tests, 0 échec (260 → 294).

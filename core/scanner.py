@@ -36,7 +36,7 @@ from core.security_checks import (
 from core.risk_management import compute_risk_plan
 from core.telegram_alerts import send_alert
 from core import performance_tracker, self_tuning, self_upgrade
-from data_sources import dexscreener, nansen, goplus
+from data_sources import dexscreener, nansen, goplus, solana_rpc
 from storage import db
 import config as cfg
 
@@ -156,6 +156,16 @@ class Scanner:
         # du rejet. Voir _remember_rejection().
         self._rejected: dict[tuple[str, str], float] = {}
         self._rejected_lock = threading.Lock()
+        # Chemin rapide PumpPortal (voir _fast_pump_tick) : mints déjà pris en
+        # charge -> instant, et thread dédié.
+        self._fast_seen: dict[str, float] = {}
+        self._fast_pending: dict[str, dict] = {}   # mint -> {token, next_at} : pas encore lisible par le RPC
+        self._fast_thread: threading.Thread | None = None
+        # Publication sérialisée entre le cycle normal et le chemin rapide : la
+        # séquence « déjà annoncé ? puis enregistrer + alerter » de
+        # _process_candidate n'est pas atomique, et les deux threads peuvent
+        # tomber sur le même token. Sans ce verrou : deux alertes identiques.
+        self._publish_lock = threading.RLock()
 
     # --- Contrôles exposés à l'interface ---
     def _is_stopping(self) -> bool:
@@ -190,6 +200,12 @@ class Scanner:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        # Chemin rapide PumpPortal : un seul thread, même après plusieurs RUN/STOP
+        # (un thread encore vivant reprend simplement la main une fois l'arrêt levé).
+        if not (self._fast_thread and self._fast_thread.is_alive()):
+            self._fast_thread = threading.Thread(target=self._fast_pump_loop, daemon=True,
+                                                 name="fast-pump-path")
+            self._fast_thread.start()
         logger.info("Scanner démarré (RUN).")
 
     def pause(self):
@@ -343,26 +359,44 @@ class Scanner:
         # arrivent en casse variable selon la source (checksum ou minuscules).
         return (chain, contract if chain == "solana" else contract.lower())
 
-    def _remember_rejection(self, chain: str, contract: str | None):
+    @staticmethod
+    def _rejection_ttl(candidate: dict | None) -> float:
+        """
+        Durée de mémorisation d'un rejet. Un token « early » (première minute,
+        bonding curve, < EARLY_DETECTION_WINDOW_MINUTES) n'a PAS un verdict
+        stable : rejeté à la seconde 3 parce que son créateur est seul porteur,
+        il peut être parfaitement distribué à la minute 2. Le mémoriser 10 min le
+        ferait manquer pile quand il devient alertable — l'inverse de « early ».
+        Ces tokens sont donc re-testés (REJECTED_RECHECK_EARLY_SECONDS, très
+        court) ; seuls les tokens plus âgés, dont le verdict ne bouge plus, gardent
+        la durée complète.
+        """
         ttl = getattr(cfg, "REJECTED_RECHECK_SECONDS", 0)
+        if candidate is not None and (is_first_minute_candidate(candidate)
+                                      or is_early_candidate(candidate)):
+            ttl = min(ttl, getattr(cfg, "REJECTED_RECHECK_EARLY_SECONDS", 20))
+        return ttl
+
+    def _remember_rejection(self, chain: str, contract: str | None,
+                            candidate: dict | None = None):
+        ttl = self._rejection_ttl(candidate)
         if not contract or ttl <= 0:
             return
         now = time.time()
         with self._rejected_lock:
-            self._rejected[self._rejection_key(chain, contract)] = now
+            self._rejected[self._rejection_key(chain, contract)] = now + ttl   # instant d'expiration
             if len(self._rejected) > 5000:   # borne mémoire sur une longue session
-                self._rejected = {k: v for k, v in self._rejected.items() if now - v < ttl}
+                self._rejected = {k: v for k, v in self._rejected.items() if v > now}
 
     def _is_recently_rejected(self, chain: str, contract: str | None) -> bool:
-        ttl = getattr(cfg, "REJECTED_RECHECK_SECONDS", 0)
-        if not contract or ttl <= 0:
+        if not contract or getattr(cfg, "REJECTED_RECHECK_SECONDS", 0) <= 0:
             return False
         key = self._rejection_key(chain, contract)
         with self._rejected_lock:
-            rejected_at = self._rejected.get(key)
-            if rejected_at is None:
+            expires_at = self._rejected.get(key)
+            if expires_at is None:
                 return False
-            if time.time() - rejected_at >= ttl:
+            if time.time() >= expires_at:
                 del self._rejected[key]
                 return False
             return True
@@ -408,6 +442,92 @@ class Scanner:
             self._prune_watchlist()
             self._log_visibility_if_stalled()
             self._stop_event.wait(cfg.SCAN_INTERVAL_SECONDS)
+
+    # --- Chemin rapide PumpPortal : alerte dans les premières secondes ---
+    def _fast_pump_enabled(self) -> bool:
+        return (
+            bool(getattr(cfg, "FAST_PUMP_PATH", False))
+            and bool(getattr(cfg, "ENABLE_PUMPPORTAL_FIREHOSE", False))
+            and "solana" in self.state.active_chains
+            and self.state.running
+            and not self.state.paused
+        )
+
+    def _fast_pump_loop(self):
+        while True:
+            if self._stop_event.is_set() and not self.state.running:
+                # STOP demandé. Le thread reste en veille au lieu de mourir : un
+                # RUN suivant le retrouve vivant (voir run()).
+                time.sleep(1)
+                continue
+            try:
+                if self._fast_pump_enabled():
+                    self._fast_pump_tick()
+            except Exception:
+                logger.exception("Erreur dans le chemin rapide PumpPortal.")
+            time.sleep(max(0.2, float(getattr(cfg, "FAST_PUMP_POLL_SECONDS", 1.0))))
+
+    def _fast_pump_tick(self):
+        """
+        Traite les créations pump.fun FRAÎCHES, sans attendre le cycle de scan.
+        Passe par _process_chain : préfiltre, vérification, vetos, score, curseur
+        et filtre d'âge sont EXACTEMENT ceux du cycle normal — seule l'attente
+        disparaît. Un token de moins de FAST_PUMP_MIN_AGE_SECONDS attend le
+        passage suivant (le RPC ne connaît pas encore son mint) ; au-delà de
+        FAST_PUMP_MAX_AGE_SECONDS, le cycle normal en a la charge.
+        """
+        from data_sources import pumpportal   # import local : dépend du flux réseau
+        pumpportal.ensure_started()
+        sol_price = dexscreener.get_sol_price_usd()
+        if not sol_price:
+            return
+
+        now = time.time()
+        min_age = float(getattr(cfg, "FAST_PUMP_MIN_AGE_SECONDS", 2))
+        max_age = float(getattr(cfg, "FAST_PUMP_MAX_AGE_SECONDS", 90))
+        retry_s = float(getattr(cfg, "FAST_PUMP_RETRY_SECONDS", 2))
+
+        # 1. Nouvelles créations -> file d'attente « pas encore lisible par le RPC ».
+        for t in pumpportal.get_recent_tokens(max_age_seconds=max_age):
+            mint = t.get("mint")
+            if (mint and mint not in self._fast_seen and mint not in self._fast_pending
+                    and (now - t["_received_at"]) >= min_age):
+                self._fast_pending[mint] = {"token": t, "next_at": 0.0}
+
+        # 2. Trop vieux pour le chemin rapide : le cycle normal en a la charge.
+        for mint in [m for m, p in self._fast_pending.items()
+                     if now - p["token"]["_received_at"] > max_age]:
+            del self._fast_pending[mint]
+            self._fast_seen[mint] = now
+        if len(self._fast_seen) > 2000:   # borne mémoire
+            self._fast_seen = {m: ts for m, ts in self._fast_seen.items() if now - ts < 600}
+
+        due = [(m, p) for m, p in self._fast_pending.items() if p["next_at"] <= now]
+        if not due:
+            return
+
+        # 3. UNE sonde groupée : lesquels le RPC voit-il déjà ? Vérifier avant,
+        # c'est vérifier dans le vide (voir solana_rpc.visible_mints) — donc
+        # alerter sans contrôle réel, ce que ce bot ne fait pas.
+        visible = solana_rpc.visible_mints([m for m, _ in due])
+        ready = []
+        for mint, p in due:
+            if mint in visible:
+                ready.append((mint, p))
+            else:
+                p["next_at"] = now + retry_s   # on retente bientôt, sans marteler le RPC
+
+        if not ready:
+            return
+        ready.sort(key=lambda mp: mp[1]["token"]["_received_at"], reverse=True)   # plus frais d'abord
+        batch = ready[:max(1, int(getattr(cfg, "FAST_PUMP_BATCH", 6)))]
+        for mint, _p in batch:
+            del self._fast_pending[mint]
+            self._fast_seen[mint] = now
+
+        candidates = solana.candidates_from_pump_tokens([p["token"] for _m, p in batch], sol_price)
+        if candidates:
+            self._process_chain("solana", solana, candidates)
 
     def _prune_watchlist(self):
         cutoff = time.time() - cfg.WATCH_REQUEUE_TTL_SECONDS
@@ -564,7 +684,8 @@ class Scanner:
             if self._is_stopping():
                 return  # STOP demandé : on n'émet plus aucune alerte
             try:
-                self._process_candidate(chain, candidate, stats)
+                with self._publish_lock:
+                    self._process_candidate(chain, candidate, stats)
             except Exception:
                 logger.exception(f"Erreur de traitement d'un candidat sur {chain}.")
 
@@ -588,7 +709,7 @@ class Scanner:
             stats["rejected"] += 1
             with self._watchlist_lock:
                 self._watchlist.pop(contract, None)
-            self._remember_rejection(chain, contract)
+            self._remember_rejection(chain, contract, candidate)
             logger.info(
                 f"[{chain}] {ticker} REJETÉ — {'; '.join(scored['reasons'][:3]) or 'raison inconnue'}"
             )
@@ -624,7 +745,7 @@ class Scanner:
             candidate["dex_paid"] = dexscreener.check_dex_paid(chain, contract)
             if candidate["dex_paid"] is True:
                 stats["rejected"] += 1
-                self._remember_rejection(chain, contract)
+                self._remember_rejection(chain, contract, candidate)
                 logger.info(f"[{chain}] {ticker} REJETÉ — déjà DEX Paid, hors cible.")
                 return
 
@@ -643,7 +764,7 @@ class Scanner:
                 stats["rejected"] += 1
                 with self._watchlist_lock:
                     self._watchlist.pop(contract, None)
-                self._remember_rejection(chain, contract)
+                self._remember_rejection(chain, contract, candidate)
                 logger.info(f"[{chain}] {ticker} REJETÉ — {veto}")
                 return
 

@@ -18,6 +18,7 @@ Consultable via core/self_upgrade.get_source_health() et exposé à l'UI via
 gui/bridge.py::getSourceHealth().
 """
 import logging
+import re
 import time
 from urllib.parse import urlparse
 
@@ -42,6 +43,19 @@ _CB_FAILURE_RATIO = 0.8  # coupe si >= 80% d'échecs sur la fenêtre récente
 _CB_COOLDOWN_SECONDS = 120  # durée de repos avant de réautoriser un essai
 
 _health: dict[str, dict] = {}  # domaine -> {"results": deque[bool], "tripped_until": float, "total_calls": int, "total_failures": int}
+
+
+# Les URL d'API portent souvent la clé dans la requête (Helius : ?api-key=...).
+# Elles étaient écrites TELLES QUELLES dans les journaux — donc dans la console,
+# dans le panneau LOG du dashboard, et dans tout journal collé à quelqu'un pour
+# demander de l'aide. On masque la valeur de tout paramètre qui ressemble à un
+# secret, dans l'URL comme dans le texte d'une exception réseau (qui la recopie).
+_SECRET_PARAM = re.compile(
+    r"(?i)((?:api[-_]?key|apikey|access[-_]?token|token|secret|key|auth|signature)=)([^&\s'\")]+)")
+
+
+def _redact(text) -> str:
+    return _SECRET_PARAM.sub(r"\g<1>***", str(text))
 
 
 def _domain(url: str) -> str:
@@ -149,17 +163,17 @@ def safe_get_json(url: str, params: dict | None = None, timeout: int = 8, header
     try:
         resp = _session.get(url, params=params, timeout=timeout, headers=headers)
     except requests.exceptions.RequestException as e:
-        logger.warning(f"Requête réseau échouée ({url}) : {e}")
+        logger.warning(f"Requête réseau échouée ({_redact(url)}) : {_redact(e)}")
         _record(domain, False)
         return None
     if resp.status_code != 200:
-        logger.warning(f"Réponse HTTP {resp.status_code} pour {url}")
+        logger.warning(f"Réponse HTTP {resp.status_code} pour {_redact(url)}")
         _record(domain, False)
         return None
     try:
         result = resp.json()
     except ValueError:
-        logger.warning(f"Réponse non-JSON pour {url}")
+        logger.warning(f"Réponse non-JSON pour {_redact(url)}")
         _record(domain, False)
         return None
     _record(domain, True)
@@ -175,17 +189,17 @@ def safe_post_json(url: str, json_body: dict, headers: dict | None = None, timeo
     try:
         resp = _session.post(url, json=json_body, headers=headers, timeout=timeout)
     except requests.exceptions.RequestException as e:
-        logger.warning(f"Requête réseau échouée ({url}) : {e}")
+        logger.warning(f"Requête réseau échouée ({_redact(url)}) : {_redact(e)}")
         _record(domain, False)
         return None
     if resp.status_code != 200:
-        logger.warning(f"Réponse HTTP {resp.status_code} pour {url} : {resp.text[:200]}")
+        logger.warning(f"Réponse HTTP {resp.status_code} pour {_redact(url)} : {_redact(resp.text[:200])}")
         _record(domain, False)
         return None
     try:
         result = resp.json()
     except ValueError:
-        logger.warning(f"Réponse non-JSON pour {url}")
+        logger.warning(f"Réponse non-JSON pour {_redact(url)}")
         _record(domain, False)
         return None
     _record(domain, True)

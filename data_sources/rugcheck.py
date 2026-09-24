@@ -102,6 +102,7 @@ def get_report(mint: str) -> dict:
     empty = {
         "available": False, "score": None, "risks": [], "critical_risks": [],
         "lp_locked_pct": None, "top_holder_pct": None, "insider_pct": None, "rugged": None,
+        "holders": [],
     }
     if not mint or not _enabled:
         return empty
@@ -157,6 +158,10 @@ def _normalize(data: dict) -> dict:
         "critical_risks": critical,
         "lp_locked_pct": _extract_lp_locked(data),
         "top_holder_pct": _extract_top_holder(data),
+        # Porteurs bruts (propriétaire, %), pour qu'un appelant qui connaît la
+        # bonding curve puisse la retirer du calcul : top_holder_pct ci-dessus la
+        # COMPTE (vérifié sur des rapports réels : la curve y figure à 62-98 %).
+        "holders": _extract_holders(data),
         "insider_pct": _extract_insider_pct(data),
         "rugged": rugged if isinstance(rugged, bool) else None,
     }
@@ -204,6 +209,34 @@ def _extract_top_holder(data: dict) -> float | None:
     if not pcts:
         return None
     pcts.sort(reverse=True)
+    return max(0.0, min(100.0, sum(pcts[:10])))
+
+
+def _extract_holders(data: dict) -> list[dict]:
+    holders = data.get("topHolders")
+    out = []
+    if not isinstance(holders, list):
+        return out
+    for h in holders:
+        if not isinstance(h, dict) or not h.get("owner"):
+            continue
+        pct = _to_float(h.get("pct"))
+        if pct is not None:
+            out.append({"owner": h.get("owner"), "pct": pct})
+    return out
+
+
+def top_holder_pct_excluding(holders: list[dict] | None, excluded_owners: set[str]) -> float | None:
+    """
+    Part cumulée des 10 plus gros porteurs SANS les propriétaires exclus (en
+    pratique la bonding curve). None s'il ne reste aucun porteur à mesurer.
+    """
+    pcts = sorted(
+        (h["pct"] for h in (holders or []) if h.get("owner") not in excluded_owners),
+        reverse=True,
+    )
+    if not pcts:
+        return None
     return max(0.0, min(100.0, sum(pcts[:10])))
 
 

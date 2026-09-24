@@ -824,6 +824,163 @@ check(_prefetch_calls == [["MINTA", "MINTB"]],
       "chains.solana.enrich_batch pré-charge tout le lot d'un coup avant d'enrichir candidat par candidat",
       f"-> appels de prefetch : {_prefetch_calls}")
 
+# CORRECTIF — concentration : la bonding curve pump.fun n'est PAS un porteur.
+# Le propriétaire du compte de token est un PDA propre à chaque token, dont le
+# PROGRAMME propriétaire est pump.fun : il faut regarder deux niveaux. Mesuré sur
+# des tokens vivants de 22 s : la curve (50 à 99 % de l'offre) était comptée comme
+# un « gros porteur », d'où « un seul wallet détient 100 % » sur presque tout.
+PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+SYSTEM_PROGRAM = "11111111111111111111111111111111"
+_conc_fail_level2 = {"on": False}
+
+def _fake_rpc(method, params):
+    if method == "getTokenLargestAccounts":
+        return {"value": [{"address": "CURVEACC", "uiAmount": 800000},
+                          {"address": "DEVACC", "uiAmount": 30000},
+                          {"address": "WHALEACC", "uiAmount": 20000}]}, True
+    if method == "getMultipleAccounts":
+        wanted = params[0]
+        if "CURVEACC" in wanted:   # niveau 1 : propriétaire (wallet) de chaque compte de token
+            owner_of = {"CURVEACC": "CURVEPDA", "DEVACC": "DEVWALLET", "WHALEACC": "WHALEWALLET"}
+            return {"value": [{"data": {"parsed": {"info": {"owner": owner_of[a]}}}} for a in wanted]}, True
+        if _conc_fail_level2["on"]:   # niveau 2 en échec
+            return None, False
+        prog_of = {"CURVEPDA": PUMP_PROGRAM, "DEVWALLET": SYSTEM_PROGRAM, "WHALEWALLET": SYSTEM_PROGRAM}
+        return {"value": [{"owner": prog_of[a]} for a in wanted]}, True
+    return None, False
+
+_orig_call, _orig_gma = solana_rpc._call, solana_rpc.get_mint_authorities
+solana_rpc._call = _fake_rpc
+solana_rpc.get_mint_authorities = lambda mint: {"supply": 1_000_000.0}
+try:
+    solana_rpc._program_cache.clear()
+    _conc = solana_rpc.get_holder_concentration("MINTCONC")
+    check(_conc is not None and abs(_conc["top10_holder_pct"] - 5.0) < 1e-9
+          and abs(_conc["largest_holder_pct"] - 3.0) < 1e-9 and _conc["accounts_counted"] == 2,
+          "Concentration : la bonding curve pump.fun (PDA possédé par le programme) est exclue",
+          f"-> {_conc}")
+
+    # Échec du 2e niveau : jamais d'exclusion à tort, on retombe sur l'ancien comportement.
+    solana_rpc._program_cache.clear()
+    _conc_fail_level2["on"] = True
+    _conc_fb = solana_rpc.get_holder_concentration("MINTCONC")
+    check(_conc_fb is not None and abs(_conc_fb["top10_holder_pct"] - 85.0) < 1e-9,
+          "Concentration : si le 2e niveau échoue, rien n'est exclu à tort (pas d'assouplissement silencieux)",
+          f"-> {_conc_fb}")
+    check("CURVEPDA" not in solana_rpc._program_cache,
+          "Un échec RPC n'est jamais mis en cache comme un verdict")
+
+    # Curve dont le PDA est possédé par le programme SYSTÈME (mesuré sur des tokens
+    # vivants : exactement 793 100 000 jetons = réserves initiales d'une curve) :
+    # la détection par programme est impuissante, la clé fournie par PumpPortal
+    # (`bondingCurveKey`) l'identifie exactement.
+    _conc_fail_level2["on"] = False
+    def _fake_rpc_sys(method, params):
+        if method == "getTokenLargestAccounts":
+            return {"value": [{"address": "CURVEACC", "uiAmount": 793_100},
+                              {"address": "DEVACC", "uiAmount": 30_000},
+                              {"address": "WHALEACC", "uiAmount": 20_000}]}, True
+        if method == "getMultipleAccounts":
+            wanted = params[0]
+            if "CURVEACC" in wanted:
+                owner_of = {"CURVEACC": "CURVESYS", "DEVACC": "DEVWALLET", "WHALEACC": "WHALEWALLET"}
+                return {"value": [{"data": {"parsed": {"info": {"owner": owner_of[a]}}}} for a in wanted]}, True
+            return {"value": [{"owner": SYSTEM_PROGRAM} for _ in wanted]}, True
+        return None, False
+    solana_rpc._call = _fake_rpc_sys
+    solana_rpc._program_cache.clear()
+    _no_key = solana_rpc.get_holder_concentration("MINTSYS")
+    _with_key = solana_rpc.get_holder_concentration("MINTSYS", exclude_owners={"CURVESYS"})
+    check(_no_key is not None and _no_key["largest_holder_pct"] > 79.0,
+          "Concentration : sans la clé de la curve, un PDA système est (à tort) vu comme un porteur",
+          f"-> {_no_key}")
+    check(_with_key is not None and abs(_with_key["top10_holder_pct"] - 5.0) < 1e-9
+          and abs(_with_key["largest_holder_pct"] - 3.0) < 1e-9,
+          "Concentration : la clé bondingCurveKey de PumpPortal exclut exactement la curve",
+          f"-> {_with_key}")
+    # Un vrai développeur qui achète sa propre curve reste rejeté : la clé n'exclut QUE la curve.
+    _dev_key = solana_rpc.get_holder_concentration("MINTSYS", exclude_owners={"DEVWALLET"})
+    check(_dev_key is not None and _dev_key["largest_holder_pct"] > 79.0,
+          "Concentration : exclure la curve n'exclut pas un vrai gros porteur (le dev qui achète 79 % reste vu)")
+
+    # Le candidat PumpPortal porte la clé, et enrich_with_security la transmet au RPC.
+    from chains import solana as _sol_curve
+    _cand_curve = _sol_curve.candidates_from_pump_tokens(
+        [{"mint": "M", "symbol": "S", "name": "N", "marketCapSol": 30, "vSolInBondingCurve": 30,
+          "vTokensInBondingCurve": 1e9, "pool": "pump", "traderPublicKey": "C",
+          "bondingCurveKey": "CURVEKEY123", "_received_at": time.time()}], 150.0)
+    check(_cand_curve and _cand_curve[0].get("bonding_curve") == "CURVEKEY123",
+          "Le candidat PumpPortal porte la clé de sa bonding curve")
+    _seen_excl = {}
+    _o = (solana_rpc.get_holder_concentration, solana_rpc.get_mint_authorities,
+          solana_rpc.get_creator_holding_pct, _sol_curve.goplus.check_token,
+          _sol_curve.rugcheck.get_report)
+    solana_rpc.get_holder_concentration = lambda mint, top_n=10, exclude_owners=None: (
+        _seen_excl.update(x=exclude_owners) or None)
+    solana_rpc.get_mint_authorities = lambda mint: None
+    solana_rpc.get_creator_holding_pct = lambda mint, creator: None
+    _sol_curve.goplus.check_token = lambda chain, contract: None
+    _sol_curve.rugcheck.get_report = lambda contract: {"available": False}
+    try:
+        _sol_curve.enrich_with_security(dict(_cand_curve[0]))
+    finally:
+        (solana_rpc.get_holder_concentration, solana_rpc.get_mint_authorities,
+         solana_rpc.get_creator_holding_pct, _sol_curve.goplus.check_token,
+         _sol_curve.rugcheck.get_report) = _o
+    check(_seen_excl.get("x") == {"CURVEKEY123"},
+          "enrich_with_security transmet la clé de la curve au calcul de concentration",
+          f"-> {_seen_excl}")
+
+    # RugCheck compte la curve parmi ses « top holders » (vérifié sur des rapports
+    # réels : 62-98 %). Fusionné par max() avec la mesure RPC qui l'exclut, il
+    # écrasait un 1 % réel par un faux 100 %.
+    from data_sources import rugcheck as _rc_curve
+    _rc_raw = {"topHolders": [
+        {"owner": "CURVEK", "pct": 98.9, "insider": False},
+        {"owner": "W1", "pct": 1.05, "insider": False},
+        {"owner": "W2", "pct": 0.05, "insider": False}]}
+    _rc_norm = _rc_curve._normalize(_rc_raw)
+    check(_rc_norm["top_holder_pct"] > 99.9 and len(_rc_norm["holders"]) == 3,
+          "RugCheck : le chiffre brut compte la curve, mais la liste des porteurs est conservée")
+    check(abs(_rc_curve.top_holder_pct_excluding(_rc_norm["holders"], {"CURVEK"}) - 1.10) < 1e-9
+          and _rc_curve.top_holder_pct_excluding([{"owner": "CURVEK", "pct": 98.9}], {"CURVEK"}) is None,
+          "RugCheck : top_holder_pct_excluding retire la curve (None s'il ne reste aucun porteur)")
+
+    def _enrich_conc(rpc_result, curve_key):
+        _o2 = (solana_rpc.get_holder_concentration, solana_rpc.get_mint_authorities,
+               solana_rpc.get_creator_holding_pct, _sol_curve.goplus.check_token,
+               _sol_curve.rugcheck.get_report)
+        solana_rpc.get_holder_concentration = lambda mint, top_n=10, exclude_owners=None: rpc_result
+        solana_rpc.get_mint_authorities = lambda mint: None
+        solana_rpc.get_creator_holding_pct = lambda mint, creator: None
+        _sol_curve.goplus.check_token = lambda chain, contract: None
+        _sol_curve.rugcheck.get_report = lambda contract: dict(_rc_norm, available=True)
+        try:
+            cand = {"contract": "M", "ticker": "T", "is_pump_bonding_curve": True}
+            if curve_key:
+                cand["bonding_curve"] = curve_key
+            return _sol_curve.enrich_with_security(cand)["security"].get("top10_holder_pct")
+        finally:
+            (solana_rpc.get_holder_concentration, solana_rpc.get_mint_authorities,
+             solana_rpc.get_creator_holding_pct, _sol_curve.goplus.check_token,
+             _sol_curve.rugcheck.get_report) = _o2
+
+    _rpc_ok = {"top10_holder_pct": 1.0, "largest_holder_pct": 1.0, "accounts_counted": 2}
+    check(abs(_enrich_conc(_rpc_ok, "CURVEK") - 1.10) < 1e-9,
+          "Curve connue : le faux 100 % de RugCheck n'écrase plus la mesure RPC (max des deux, curve exclue)")
+    check(_enrich_conc(None, "CURVEK") is not None and abs(_enrich_conc(None, "CURVEK") - 1.10) < 1e-9,
+          "Curve connue et RPC muet : on utilise le chiffre RugCheck recalculé sans la curve")
+    check(_enrich_conc(_rpc_ok, None) > 99.9,
+          "Sans clé de curve (token migré/DexScreener) : comportement d'origine inchangé (max, mesure la plus défavorable)")
+    # Un vrai porteur concentré reste vu : le dev détient 79 %, hors curve.
+    _rc_norm["holders"] = [{"owner": "CURVEK", "pct": 20.0}, {"owner": "DEV", "pct": 79.0}]
+    check(abs(_enrich_conc({"top10_holder_pct": 79.0, "largest_holder_pct": 79.0}, "CURVEK") - 79.0) < 1e-9,
+          "Un vrai gros porteur (dev à 79 %) reste mesuré à 79 % : seule la curve est retirée")
+finally:
+    _conc_fail_level2["on"] = False
+    solana_rpc._call, solana_rpc.get_mint_authorities = _orig_call, _orig_gma
+    solana_rpc._program_cache.clear()
+
 
 print("\n=== 11. Robustesse générale ===")
 from data_sources import http_utils
@@ -834,6 +991,19 @@ for _ in range(10):
 check(http_utils._is_tripped(domain) is True, "Le disjoncteur réseau s'arme après des échecs répétés")
 check(http_utils.get_source_health()[domain]["circuit_open"] is True,
       "get_source_health() reflète le disjoncteur ouvert")
+
+# Les clés d'API ne doivent JAMAIS apparaître dans les journaux : l'URL Helius porte
+# la clé dans la requête, et l'exception réseau la recopie. Constaté dans un vrai
+# journal (console + panneau LOG du dashboard + journaux collés pour de l'aide).
+_helius = "https://mainnet.helius-rpc.com/?api-key=00000000-0000-0000-0000-SECRETVALUE1"
+check("SECRETVALUE1" not in http_utils._redact(_helius) and "api-key=***" in http_utils._redact(_helius),
+      "Journaux : la clé Helius d'une URL est masquée (api-key=***)")
+_exc = "HTTPSConnectionPool(host='x'): Max retries exceeded with url: /?api-key=SECRETVALUE2 (Caused by E)"
+check("SECRETVALUE2" not in http_utils._redact(_exc),
+      "Journaux : la clé recopiée dans le texte d'une exception réseau est masquée aussi")
+check(http_utils._redact("https://api.geckoterminal.com/api/v2/networks/arc/new_pools?include=base_token")
+      == "https://api.geckoterminal.com/api/v2/networks/arc/new_pools?include=base_token",
+      "Journaux : une URL sans secret n'est pas modifiée")
 
 from core.risk_management import compute_risk_plan
 plan = compute_risk_plan({"price_usd": 0.001}, mode="safe")
@@ -1500,6 +1670,123 @@ try:
           "Rejets : REJECTED_RECHECK_SECONDS = 0 désactive la mémoire")
 finally:
     config.REJECTED_RECHECK_SECONDS = _prev_ttl
+
+# --- 12e-quater. Chemin rapide PumpPortal : alerte dans les premières secondes ---
+# Avant : une création pump.fun (poussée en millisecondes) attendait le PROCHAIN
+# CYCLE de scan (toutes les chaînes, 25 vérifications à la suite, puis 45 s).
+from data_sources import pumpportal as _pp_fast
+from data_sources import dexscreener as _dsx_fast
+config.apply_profile("degen")
+_now_f = time.time()
+def _pump_tok(mint, age_s, mcap_sol=30):
+    return {"mint": mint, "symbol": mint, "name": mint, "marketCapSol": mcap_sol,
+            "vSolInBondingCurve": 30, "vTokensInBondingCurve": 1e9, "pool": "pump",
+            "traderPublicKey": "CREATOR", "_received_at": time.time() - age_s}
+
+_pool_f = []
+_visible_f = set()   # mints que le « RPC » simulé connaît déjà
+_orig_recent, _orig_start, _orig_price, _orig_vis = (
+    _pp_fast.get_recent_tokens, _pp_fast.ensure_started,
+    _dsx_fast.get_sol_price_usd, solana_rpc.visible_mints)
+solana_rpc.visible_mints = lambda mints: {m for m in mints if m in _visible_f}
+_pp_fast.get_recent_tokens = lambda max_age_seconds=600: [
+    t for t in _pool_f if time.time() - t["_received_at"] <= max_age_seconds]
+_pp_fast.ensure_started = lambda: None
+_dsx_fast.get_sol_price_usd = lambda: 150.0
+try:
+    _sc_fast = Scanner(ScannerState())
+    _sc_fast.state.running = True
+    _proc_calls = []
+    _sc_fast._process_chain = lambda chain, module, cands: _proc_calls.append(
+        (chain, [c["contract"] for c in cands], cands))
+
+    _pool_f[:] = [_pump_tok("TOO_YOUNG", 0.5)]
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [] and "TOO_YOUNG" not in _sc_fast._fast_seen,
+          "Chemin rapide : un token de < 2 s attend (le RPC ne connaît pas encore son mint)")
+
+    # Le RPC ne voit pas encore le mint : on NE vérifie PAS dans le vide (dossier
+    # vide = alerte sans aucun contrôle réel). Le token attend, sans rafale d'appels.
+    _pool_f[:] = [_pump_tok("FRESH1", 5)]
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [] and "FRESH1" in _sc_fast._fast_pending and "FRESH1" not in _sc_fast._fast_seen,
+          "Chemin rapide : mint pas encore visible du RPC => aucune vérification à vide, le token attend")
+    _probe_calls = []
+    solana_rpc.visible_mints = lambda mints: (_probe_calls.append(list(mints)) or set())
+    _sc_fast._fast_pump_tick()
+    check(_probe_calls == [],
+          "Chemin rapide : pas de nouvelle sonde avant FAST_PUMP_RETRY_SECONDS (pas de martelage du RPC)")
+    solana_rpc.visible_mints = lambda mints: {m for m in mints if m in _visible_f}
+
+    # Dès que le RPC voit le mint : vérification COMPLÈTE immédiate (même pipeline).
+    _visible_f.add("FRESH1")
+    _sc_fast._fast_pending["FRESH1"]["next_at"] = 0.0
+    _sc_fast._fast_pump_tick()
+    check(len(_proc_calls) == 1 and _proc_calls[0][0] == "solana" and _proc_calls[0][1] == ["FRESH1"]
+          and _proc_calls[0][2][0]["is_pump_bonding_curve"] is True
+          and "FRESH1" not in _sc_fast._fast_pending,
+          "Chemin rapide : dès que le RPC voit le mint, le token est vérifié aussitôt, sans attendre le cycle",
+          f"-> {[c[:2] for c in _proc_calls]}")
+    _sc_fast._fast_pump_tick()
+    check(len(_proc_calls) == 1, "Chemin rapide : un même token n'est jamais traité deux fois")
+
+    _proc_calls.clear()
+    _pool_f[:] = [_pump_tok(f"B{i}", 3 + i) for i in range(10)]   # B0 = le plus frais
+    _visible_f.update(f"B{i}" for i in range(10))
+    _sc_fast._fast_pump_tick()
+    _first_batch = _proc_calls[0][1]
+    check(len(_first_batch) == config.FAST_PUMP_BATCH and _first_batch[0] == "B0",
+          "Chemin rapide : au plus FAST_PUMP_BATCH créations par passage, les plus fraîches d'abord",
+          f"-> {_first_batch}")
+    _sc_fast._fast_pump_tick()
+    check(len(_proc_calls) == 2 and set(_proc_calls[1][1]).isdisjoint(_first_batch),
+          "Chemin rapide : le reliquat est repris au passage suivant, rien n'est perdu")
+
+    _proc_calls.clear()
+    _pool_f[:] = [_pump_tok("STALE", 200)]
+    _visible_f.add("STALE")
+    _sc_fast._fast_pump_tick()
+    check(_proc_calls == [],
+          "Chemin rapide : au-delà de FAST_PUMP_MAX_AGE_SECONDS, c'est le cycle normal qui prend le relais")
+
+    # Un mint qui n'apparaît jamais côté RPC est abandonné au cycle normal, pas gardé indéfiniment.
+    _pool_f[:] = [_pump_tok("GHOST", 5)]
+    _sc_fast._fast_pump_tick()
+    check("GHOST" in _sc_fast._fast_pending, "Chemin rapide : un mint invisible reste en attente au début")
+    _sc_fast._fast_pending["GHOST"]["token"]["_received_at"] = time.time() - 200
+    _sc_fast._fast_pump_tick()
+    check("GHOST" not in _sc_fast._fast_pending and "GHOST" in _sc_fast._fast_seen,
+          "Chemin rapide : un mint jamais visible est abandonné au bout de FAST_PUMP_MAX_AGE_SECONDS")
+
+    # La même fenêtre de capitalisation que le cycle normal (aucun contrôle contourné).
+    from chains import solana as _sol_fast
+    _huge = _sol_fast.candidates_from_pump_tokens([_pump_tok("HUGE", 5, mcap_sol=999_999)], 150.0)
+    check(_huge == [], "Chemin rapide : même fenêtre de capitalisation que le cycle normal")
+
+    # Interrupteurs : config, pause, chaîne désactivée.
+    check(_sc_fast._fast_pump_enabled() is True, "Chemin rapide actif en degen, scan en cours")
+    config.FAST_PUMP_PATH = False
+    check(_sc_fast._fast_pump_enabled() is False, "FAST_PUMP_PATH = False coupe le chemin rapide")
+    config.FAST_PUMP_PATH = True
+    _sc_fast.state.paused = True
+    check(_sc_fast._fast_pump_enabled() is False, "Le chemin rapide respecte PAUSE")
+    _sc_fast.state.paused = False
+    _sc_fast.state.active_chains.discard("solana")
+    check(_sc_fast._fast_pump_enabled() is False, "Le chemin rapide respecte le bouton de chaîne Solana")
+    check(hasattr(_sc_fast, "_publish_lock"),
+          "Publication sérialisée entre le cycle et le chemin rapide (pas de doublon d'alerte)")
+
+    # TTL des rejets : court pour un token early, complet pour un token établi.
+    check(Scanner._rejection_ttl({"is_pump_bonding_curve": True,
+                                  "pair_created_at": time.time() * 1000}) <= config.REJECTED_RECHECK_EARLY_SECONDS
+          and Scanner._rejection_ttl({"pair_created_at": time.time() * 1000 - 3 * 3_600_000})
+          == config.REJECTED_RECHECK_SECONDS,
+          "Rejets : un token early est re-testé vite, un token établi garde le délai complet")
+finally:
+    _pp_fast.get_recent_tokens, _pp_fast.ensure_started, _dsx_fast.get_sol_price_usd = (
+        _orig_recent, _orig_start, _orig_price)
+    solana_rpc.visible_mints = _orig_vis
+    config.FAST_PUMP_PATH = True
 
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch
