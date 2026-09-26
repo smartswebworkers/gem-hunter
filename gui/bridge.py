@@ -185,9 +185,20 @@ class Bridge(QObject):
         else:
             self.scanner.resume()
 
-    @pyqtSlot(bool)
-    def setAutoBuy(self, enabled: bool):
-        self.scanner.set_auto_buy(enabled)
+    @pyqtSlot(bool, result=str)
+    def setAutoBuy(self, enabled: bool) -> str:
+        """Active/coupe l'AUTO BUY. Renvoie le mode (« simulation »)."""
+        return self.scanner.set_auto_buy(enabled)
+
+    @pyqtSlot(float, result=float)
+    def setAutoBuyAmount(self, usd: float) -> float:
+        """Capital par achat choisi à la main. Renvoie la valeur RETENUE (plancher 1 $)."""
+        return self.scanner.set_auto_buy_amount(usd)
+
+    @pyqtSlot(result=str)
+    def getAutoBuyStatus(self) -> str:
+        """{mode, enabled, amount_usd, open, closed} : pour afficher l'état au chargement."""
+        return json.dumps(self.scanner.autotrader.summary())
 
     @pyqtSlot(bool)
     def setTelegram(self, enabled: bool):

@@ -60,6 +60,29 @@ CREATE TABLE IF NOT EXISTS performance_checks (
     UNIQUE(signal_id, horizon)
 );
 
+CREATE TABLE IF NOT EXISTS autobuy_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain TEXT NOT NULL,
+    mint TEXT NOT NULL UNIQUE,      -- UNIQUE : jamais deux achats du même token (course entre threads)
+    ticker TEXT,
+    curve_key TEXT,
+    simulated INTEGER DEFAULT 1,
+    status TEXT NOT NULL,           -- buying | open | closed | failed | unknown
+    opened_at REAL,
+    closed_at REAL,
+    amount_usd REAL,
+    sol_price_usd REAL,
+    cost_sol REAL,
+    tokens REAL,
+    entry_price_sol REAL,           -- prix effectif d'entrée (SOL dépensé / jetons reçus, frais compris)
+    entry_price_usd REAL,
+    buy_sig TEXT,
+    sell_sig TEXT,
+    proceeds_sol REAL,
+    sell_attempts INTEGER DEFAULT 0,
+    note TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_signals_lookup ON signals(chain, contract, created_at);
 CREATE INDEX IF NOT EXISTS idx_perf_horizon ON performance_checks(horizon, checked_at);
 """
@@ -475,3 +498,73 @@ def get_training_data(horizon: str = "6h", limit: int = 500) -> list[tuple[dict,
         if features and r["return_pct"] is not None:
             results.append((features, r["return_pct"]))
     return results
+
+
+# --- Positions de l'AUTO BUY (core/autotrader.py) ----------------------------
+def create_position(chain: str, mint: str, ticker: str | None, curve_key: str | None,
+                    simulated: bool, amount_usd: float) -> int | None:
+    """
+    Réserve la position AVANT d'envoyer l'ordre. mint est UNIQUE : si le token a déjà
+    une ligne (achat en cours, ouvert, clos ou raté), on ne rachète pas — renvoie None.
+    """
+    try:
+        with get_conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO autobuy_positions
+                   (chain, mint, ticker, curve_key, simulated, status, opened_at, amount_usd)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (chain, mint, ticker, curve_key, 1 if simulated else 0, "buying", time.time(), amount_usd),
+            )
+            return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None
+
+
+def update_position(position_id: int, **fields):
+    allowed = {"status", "closed_at", "sol_price_usd", "cost_sol", "tokens", "entry_price_sol",
+               "entry_price_usd", "buy_sig", "sell_sig", "proceeds_sol", "sell_attempts", "note"}
+    bad = set(fields) - allowed
+    if bad:
+        raise ValueError(f"colonnes inconnues : {sorted(bad)}")
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        conn.execute(f"UPDATE autobuy_positions SET {sets} WHERE id = ?", (*fields.values(), position_id))
+
+
+def get_positions(status: str | None = None, simulated: bool | None = None) -> list[dict]:
+    query, params = "SELECT * FROM autobuy_positions WHERE 1=1", []
+    if status is not None:
+        query += " AND status = ?"
+        params.append(status)
+    if simulated is not None:
+        query += " AND simulated = ?"
+        params.append(1 if simulated else 0)
+    query += " ORDER BY opened_at DESC"
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+def spent_usd_since(since_ts: float, simulated: bool) -> float:
+    """Mises engagées depuis `since_ts` (achats en cours ou réussis, pas les échecs)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT COALESCE(SUM(amount_usd), 0) FROM autobuy_positions
+               WHERE opened_at >= ? AND simulated = ? AND status IN ('buying','open','closed','unknown')""",
+            (since_ts, 1 if simulated else 0),
+        ).fetchone()
+    return float(row[0] or 0)
+
+
+def mark_stale_buying() -> int:
+    """
+    Un achat « en cours » que rien n'a conclu (arrêt brutal pendant l'envoi) est
+    AMBIGU : l'ordre est peut-être passé. On ne le rejoue jamais ; on le marque
+    « unknown » pour que l'utilisateur vérifie son wallet.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE autobuy_positions SET status = 'unknown', note = 'achat interrompu : vérifier le wallet' "
+            "WHERE status = 'buying'")
+        return cur.rowcount

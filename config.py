@@ -126,6 +126,24 @@ FAST_PUMP_RETRY_SECONDS = 2        # délai entre deux sondes d'un mint pas enco
 FAST_PUMP_MAX_AGE_SECONDS = 90     # au-delà, le cycle normal prend le relais
 FAST_PUMP_BATCH = 6                # créations traitées par passage (les plus fraîches d'abord)
 
+# =============================================================================
+# AUTO BUY (Solana / pump.fun) — voir core/autotrader.py
+# =============================================================================
+# Achète (en SIMULATION) les tokens qui passent TOUT le pipeline d'alerte (vetos de
+# sécurité, porte d'importance) dès l'alerte, et revend 100 % dès que la valeur nette
+# atteint AUTOBUY_TAKE_PROFIT_X fois la mise. Actif uniquement quand le bouton AUTO BUY
+# du dashboard est ON. L'exécution RÉELLE (signature et envoi de transactions avec un
+# wallet) n'est volontairement PAS implémentée : voir CORRECTIFS.md, Mise à jour 40.
+# Aucun stop-loss n'est demandé : un token qui ne fait jamais x2 reste en portefeuille.
+AUTOBUY_AMOUNT_USD = 1.0            # mise par achat, RÉGLABLE dans le dashboard (champ « $ / achat »)
+AUTOBUY_MIN_USD = 1.0               # plancher : on ne peut pas descendre sous 1 $
+AUTOBUY_MAX_USD = 100.0             # garde-fou contre une faute de frappe (1000 au lieu de 1)
+AUTOBUY_TAKE_PROFIT_X = 2.0         # revente auto dès x2 (valeur nette de frais)
+AUTOBUY_FEE_PCT = 1.0               # frais pump.fun estimés par transaction (achat et vente)
+AUTOBUY_MAX_OPEN = 5                # positions ouvertes simultanées au maximum
+AUTOBUY_MAX_SPENT_USD_PER_DAY = 25.0   # plafond de mises sur 24 h glissantes
+AUTOBUY_MONITOR_SECONDS = 2.0       # fréquence de surveillance des positions ouvertes
+
 # --- Porte d'IMPORTANCE des créations pump.fun ---------------------------------
 # Constat mesuré (74 lancements vivants, à 30 s) : médiane d'achat ORGANIQUE
 # (SOL réellement dans la curve moins l'achat initial du créateur) = 0,00 SOL ;

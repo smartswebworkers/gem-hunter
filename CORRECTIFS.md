@@ -2038,3 +2038,44 @@ sélectives), `EARLY_MIN_HOLDER_ACCOUNTS`, `EARLY_TRACTION_GATE = False` pour to
 solde de la curve (les deux se compensent) ; seul un flux de trades le montrerait.
 
 316 tests, 0 échec (294 -> 316).
+
+## Mise à jour 40 — AUTO BUY : capital réglable, achat à l'alerte, revente à x2 (SIMULATION)
+
+**Demandé par l'utilisateur** : seuil minimum de 1 $, token acheté dès sa création, revente
+automatique dès x2, fonctionnel quand le bouton est activé ; puis : « je dois pouvoir choisir
+mon capital minimum manuellement ».
+
+**Ce qui est fait et testé** (`core/autotrader.py`, scanner, dashboard) :
+- **Capital par achat réglable à la main** : champ « $ / ACHAT » à côté du bouton AUTO BUY.
+  1 $ par défaut, **1 $ minimum** (impossible d'aller en dessous), 100 $ maximum (garde-fou
+  contre 1000 saisi au lieu de 1), conservé entre les lancements. Comme pour le curseur de
+  score, seule une saisie réelle de l'utilisateur est envoyée (Chromium peut restaurer
+  silencieusement une ancienne valeur).
+- **Achat dès l'alerte** : quand un token Solana passe TOUT le pipeline (vetos de sécurité,
+  porte d'importance) et déclenche une alerte, la position est ouverte au prix de sa bonding
+  curve. « Dès sa création » = dès l'alerte (~15-25 s) : acheter à la seconde 0 reviendrait à
+  acheter aussi les ~93 % de lancements morts et les scams que le pipeline écarte.
+- **Revente automatique à x2**, valeur NETTE de frais (1 % à l'achat, 1 % à la vente) : la
+  vente se déclenche quand le prix atteint ~2,04 x le prix d'entrée, pour qu'un « x2 » soit
+  un vrai x2 encaissé. Prix relu toutes les 2 s (un appel RPC groupé) ; après migration, le
+  prix vient de DexScreener. Un prix illisible ne provoque jamais de vente.
+- **Bouton** : ON = achats ET rereventes automatiques ; OFF = plus rien (les positions ouvertes
+  sont conservées). Le libellé affiche le mode : « AUTO BUY: ON (SIMULATION) ».
+- **Garde-fous** : un token n'est jamais acheté deux fois (contrainte UNIQUE en base, sûre
+  entre threads), 5 positions ouvertes au maximum, 25 $ de mises maximum par 24 h, un achat
+  interrompu est marqué « unknown » et jamais rejoué. Pas d'achat si le prix est illisible.
+- Positions enregistrées (table `autobuy_positions`) : on peut mesurer ce que la stratégie
+  aurait donné.
+
+**Ce qui n'est PAS fait, volontairement : l'exécution RÉELLE.** Signer et envoyer de vraies
+transactions avec un wallet engage de l'argent réel ; la création de cette partie (envoi de
+transactions, lecture d'une clé privée) a été bloquée par la sécurité de l'environnement de
+développement, et n'a pas été contournée. L'auto buy tourne donc en SIMULATION uniquement :
+aucune clé lue, aucune transaction signée ni envoyée. C'est à l'utilisateur de décider s'il
+veut l'exécution réelle et sous quelles conditions.
+
+**Rappels de risque** : une alerte VEILLE reste « pas un signal d'achat » (contrat vérifié, mais
+token non éprouvé) ; aucun stop-loss n'est demandé, donc un token qui ne fait jamais x2 reste
+en portefeuille ; en réel, glissement et frais de priorité pèsent lourd sur une mise de 1 $.
+
+350 tests, 0 échec (316 -> 350).

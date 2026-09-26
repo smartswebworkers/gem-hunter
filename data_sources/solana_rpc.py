@@ -288,8 +288,21 @@ def parse_bonding_curve(data_b64: str) -> dict | None:
         return None
     if len(raw) < 8 + 5 * 8 + 1:
         return None   # compte vide / absent / pas une curve
-    _vt, _vs, _rt, real_sol_lamports, _supply = struct.unpack_from("<5Q", raw, 8)
-    return {"real_sol": real_sol_lamports / 1e9, "complete": bool(raw[8 + 5 * 8])}
+    vtok, vsol, _rt, real_sol_lamports, _supply = struct.unpack_from("<5Q", raw, 8)
+    return {
+        "real_sol": real_sol_lamports / 1e9,
+        "complete": bool(raw[8 + 5 * 8]),
+        # Prix spot de la curve = SOL virtuel / jetons virtuels (jetons à 6 décimales).
+        "vtok": vtok / 1e6,
+        "vsol": vsol / 1e9,
+    }
+
+
+def spot_price_sol(curve_state: dict | None) -> float | None:
+    """Prix d'un jeton en SOL d'après l'état d'une curve (vsol / vtok), ou None."""
+    if not curve_state or not curve_state.get("vtok"):
+        return None
+    return curve_state["vsol"] / curve_state["vtok"]
 
 
 def probe_curves(curve_keys: list[str]) -> dict[str, dict]:

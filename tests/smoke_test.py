@@ -1965,6 +1965,152 @@ check(_tr_out and "7.3 SOL" in _tr_out[0]["reasons"][0] and "9" in _tr_out[0]["r
       "L'alerte affiche la traction réelle (SOL organiques + porteurs), traduite en fr/en",
       f"-> {_tr_out[0]['reasons'][:1] if _tr_out else None}")
 
+# --- 12e-sexies. AUTO BUY (simulation) : capital manuel, achat à l'alerte, revente à x2 ---
+from core.autotrader import AutoTrader
+config.apply_profile("degen")
+
+def _new_at(sol_price=150.0, curve=None, dex=None):
+    """AutoTrader sans thread ni réseau : prix, curves et DexScreener simulés."""
+    a = AutoTrader()
+    a._threads_started = True            # pas de thread : on pilote _execute_buy / monitor_once à la main
+    a._enabled = True
+    a._sol_price = lambda: sol_price
+    a._curve_states = lambda keys: {k: v for k, v in (curve or {}).items() if k in keys}
+    a._dex_price_usd = lambda mint: dex
+    return a
+
+# Capital choisi à la main : plancher 1 $, plafond anti-faute de frappe, conservé.
+_at0 = _new_at()
+check(_at0.get_amount_usd() == 1.0, "AUTO BUY : capital par défaut = 1 $")
+check(_at0.set_amount_usd(0.2) == 1.0, "AUTO BUY : le capital ne peut pas descendre sous 1 $ (0,2 -> 1)")
+check(_at0.set_amount_usd(5) == 5.0 and _at0.get_amount_usd() == 5.0, "AUTO BUY : l'utilisateur règle son capital (5 $)")
+check(_at0.set_amount_usd("abc") == 5.0 and _at0.set_amount_usd(float("nan")) == 5.0 and _at0.set_amount_usd(None) == 5.0,
+      "AUTO BUY : une valeur invalide est ignorée, le capital reste à 5 $")
+check(_at0.set_amount_usd(1000) == config.AUTOBUY_MAX_USD, "AUTO BUY : plafond anti-faute de frappe (1000 -> 100)")
+_at0.set_amount_usd(2.5)
+check(_new_at().get_amount_usd() == 2.5, "AUTO BUY : le capital choisi est conservé (relecture par une nouvelle instance)")
+
+# Décision d'achat (aucune position n'existe encore).
+def _cand(mint, source="pumpportal", curve="CK_" ):
+    return {"contract": mint, "ticker": mint, "source": source, "bonding_curve": curve + mint}
+_at1 = _new_at()
+_at1._enabled = False
+check(_at1.consider("solana", _cand("M_OFF"), config.TIER_WATCH) == "off", "AUTO BUY OFF : aucun achat")
+_at1._enabled = True
+check(_at1.consider("bsc", _cand("M_BSC"), config.TIER_WATCH) == "chain", "AUTO BUY : Solana uniquement")
+check(_at1.consider("solana", _cand("M_OLD", source="dexscreener"), config.TIER_WATCH) == "not_fresh",
+      "AUTO BUY : une VEILLE non fraîche (pas une création PumpPortal) n'est pas achetée")
+check(_at1.consider("solana", {"ticker": "X"}, config.TIER_WATCH) == "no_mint", "AUTO BUY : pas de contrat, pas d'achat")
+check(_at1.consider("solana", _cand("M_OK"), config.TIER_WATCH) == "queued" and _at1._queue.qsize() == 1,
+      "AUTO BUY : une création fraîche qui a passé le pipeline est planifiée à l'achat")
+check(_at1.consider("solana", _cand("M_SIG", source="dexscreener"), config.TIER_SIGNAL) == "queued",
+      "AUTO BUY : un SIGNAL vérifié est éligible")
+
+# Achat simulé au prix de la curve.
+_S0 = 30.0 / 1e9                                   # prix spot initial : 3e-8 SOL / jeton
+_curve0 = {"CK_M_BUY": {"real_sol": 0.5, "complete": False, "vtok": 1e9, "vsol": 30.0}}
+_at2 = _new_at(curve=_curve0)
+_at2.set_amount_usd(3.0)
+check(_at2._execute_buy({"candidate": _cand("M_BUY"), "amount_usd": 3.0}) == "bought",
+      "AUTO BUY : achat simulé exécuté")
+_pos = [p for p in db.get_positions(status="open", simulated=True) if p["mint"] == "M_BUY"][0]
+check(abs(_pos["cost_sol"] - 3.0 / 150.0) < 1e-12 and abs(_pos["tokens"] - (3.0 / 150.0) * 0.99 / _S0) < 1e-3
+      and abs(_pos["entry_price_sol"] - _S0 / 0.99) < 1e-12,
+      "AUTO BUY : jetons reçus et prix d'entrée effectif (frais 1 % compris) corrects",
+      f"-> {_pos['tokens']:.0f} jetons, entrée {_pos['entry_price_sol']:.3e}")
+check(_at2._execute_buy({"candidate": _cand("M_BUY"), "amount_usd": 3.0}) == "duplicate"
+      and len([p for p in db.get_positions(simulated=True) if p["mint"] == "M_BUY"]) == 1,
+      "AUTO BUY : un même token n'est JAMAIS acheté deux fois")
+_at2b = _new_at(curve={}, dex=None)
+check(_at2b._execute_buy({"candidate": _cand("M_NOPRICE"), "amount_usd": 1.0}) == "no_price"
+      and db.get_positions(status="failed")[0]["mint"] == "M_NOPRICE",
+      "AUTO BUY : prix du token illisible => pas d'achat à l'aveugle (position marquée « failed »)")
+check(_new_at(sol_price=None)._execute_buy({"candidate": _cand("M_NOSOL"), "amount_usd": 1.0}) == "no_sol_price",
+      "AUTO BUY : prix SOL/USD indisponible => pas d'achat")
+
+# Revente : x2 NET de frais (achat 1 % + vente 1 %) => prix >= ~2,04 x le prix spot d'entrée.
+def _at_price(mult_of_spot):
+    return {"CK_M_BUY": {"real_sol": 9.0, "complete": False, "vtok": 1e9, "vsol": 30.0 * mult_of_spot}}
+_at2._curve_states = lambda keys: _at_price(1.5)
+check(_at2.monitor_once() == [], "AUTO BUY : à x1,5 le prix, pas de revente")
+_at2._curve_states = lambda keys: _at_price(2.0)
+check(_at2.monitor_once() == [],
+      "AUTO BUY : à x2 BRUT (x1,96 net de frais) on ne vend pas encore : la revente garantit un vrai x2 net")
+_at2._curve_states = lambda keys: {}
+check(_at2.monitor_once() == [] and db.get_positions(status="open", simulated=True)[0]["mint"] == "M_BUY",
+      "AUTO BUY : prix illisible => la position reste ouverte (jamais vendue à l'aveugle)")
+_at2._enabled = False
+_at2._curve_states = lambda keys: _at_price(2.1)
+check(_at2.monitor_once() == [] and any(p["mint"] == "M_BUY" for p in db.get_positions(status="open")),
+      "AUTO BUY OFF : aucune revente automatique tant que le bouton n'est pas activé")
+_at2._enabled = True
+_sold = _at2.monitor_once()
+check(len(_sold) == 1 and _sold[0]["mint"] == "M_BUY" and _sold[0]["multiple"] >= 2.0,
+      "AUTO BUY : dès que la valeur nette atteint x2, la position est revendue",
+      f"-> {[(x['mint'], round(x['multiple'], 3)) for x in _sold]}")
+_closed = [p for p in db.get_positions(status="closed", simulated=True) if p["mint"] == "M_BUY"][0]
+check(_closed["proceeds_sol"] >= 2.0 * _closed["cost_sol"] and _closed["sell_sig"],
+      "AUTO BUY : le produit de la vente est >= 2 x la mise", f"-> {_closed['proceeds_sol']:.5f} SOL pour {_closed['cost_sol']:.5f}")
+check(_at2.monitor_once() == [], "AUTO BUY : une position déjà vendue n'est jamais revendue")
+
+# Token migré (curve terminée) : le prix vient de DexScreener.
+_at3 = _new_at(curve={"CK_M_MIG": {"real_sol": 85.0, "complete": False, "vtok": 1e9, "vsol": 30.0}}, dex=None)
+_at3._execute_buy({"candidate": _cand("M_MIG"), "amount_usd": 2.0})
+_entry_usd = [p for p in db.get_positions(status="open") if p["mint"] == "M_MIG"][0]["entry_price_usd"]
+_at3._curve_states = lambda keys: {"CK_M_MIG": {"real_sol": 85.0, "complete": True, "vtok": 1.0, "vsol": 1.0}}
+_at3._dex_price_usd = lambda mint: _entry_usd * 1.5
+check(_at3.monitor_once() == [], "AUTO BUY : token migré à x1,5 (prix DexScreener) : pas de revente")
+_at3._dex_price_usd = lambda mint: _entry_usd * 2.1
+check(len(_at3.monitor_once()) == 1, "AUTO BUY : token migré à x2,1 (prix DexScreener) : revendu")
+
+# Plafonds de risque.
+_orig_max_open, _orig_cap = config.AUTOBUY_MAX_OPEN, config.AUTOBUY_MAX_SPENT_USD_PER_DAY
+try:
+    _n_open = len(db.get_positions(status="open", simulated=True))
+    config.AUTOBUY_MAX_OPEN = _n_open
+    check(_new_at().consider("solana", _cand("M_MAXOPEN"), config.TIER_WATCH) == "max_open",
+          "AUTO BUY : plafond de positions ouvertes simultanées respecté")
+    config.AUTOBUY_MAX_OPEN = 99
+    config.AUTOBUY_MAX_SPENT_USD_PER_DAY = db.spent_usd_since(time.time() - 86400, True) + 0.5
+    check(_new_at().consider("solana", _cand("M_CAP"), config.TIER_WATCH) == "daily_cap",
+          "AUTO BUY : plafond de mises sur 24 h respecté")
+finally:
+    config.AUTOBUY_MAX_OPEN, config.AUTOBUY_MAX_SPENT_USD_PER_DAY = _orig_max_open, _orig_cap
+
+# Un achat interrompu n'est jamais rejoué : il est marqué « unknown » à la réactivation.
+_pid = db.create_position("solana", "M_STALE", "ST", None, True, 1.0)
+check(db.mark_stale_buying() >= 1 and [p for p in db.get_positions() if p["mint"] == "M_STALE"][0]["status"] == "unknown",
+      "AUTO BUY : un achat interrompu est marqué « unknown » (à vérifier), jamais rejoué")
+
+# Résumé pour l'interface + mode annoncé honnêtement.
+_sm = _at2.summary()
+check(_sm["mode"] == "simulation" and _sm["amount_usd"] == 3.0 and _sm["closed"] >= 2 and _sm["open"] >= 0,
+      "AUTO BUY : l'interface reçoit le mode (SIMULATION), le capital et le nombre de positions", f"-> {_sm}")
+
+# Câblage scanner : le hook est appelé APRÈS l'alerte, seulement bouton ON et hors PAUSE.
+class _FakeAT:
+    def __init__(self): self.calls = []
+    def consider(self, chain, cand, tier): self.calls.append((chain, cand.get("contract"), tier)); return "queued"
+    def set_enabled(self, e): return "simulation"
+    def set_amount_usd(self, v): return 4.0
+_sc_ab = Scanner(ScannerState()); _sc_ab.state.running = True; _sc_ab.state.telegram_enabled = False
+_sc_ab.autotrader = _FakeAT(); _sc_ab.set_min_score(30)
+_scored = {"score": 90.0, "tier": config.TIER_WATCH, "reasons": [], "missing_checks": [], "features": {},
+           "chain": "solana", "contract": "HOOKW", "ticker": "HW"}
+_sc_ab._handle_watch("solana", dict(_scored), dict(_scored), {"below": 0, "watch": 0, "filtered_age": 0})
+check(_sc_ab.autotrader.calls == [], "Scanner : bouton AUTO BUY OFF => le hook n'achète rien")
+_sc_ab.state.auto_buy = True
+_sc_ab._handle_watch("solana", dict(_scored, contract="HOOKW2"), dict(_scored, contract="HOOKW2"),
+                     {"below": 0, "watch": 0, "filtered_age": 0})
+check(_sc_ab.autotrader.calls == [("solana", "HOOKW2", config.TIER_WATCH)],
+      "Scanner : bouton ON => une alerte VEILLE déclenche l'achat (simulé) du token",
+      f"-> {_sc_ab.autotrader.calls}")
+_sc_ab.state.paused = True
+_sc_ab._autobuy_hook("solana", {"contract": "PAUSED"}, config.TIER_WATCH)
+check(len(_sc_ab.autotrader.calls) == 1, "Scanner : en PAUSE, aucun achat automatique")
+check(_sc_ab.set_auto_buy(True) == "simulation" and _sc_ab.set_auto_buy_amount(4) == 4.0,
+      "Scanner : le bouton et le réglage du capital sont relayés à l'auto trader")
+
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch
 # (jusqu'à 3 s/appel × 3 appels × 25 tokens sous 429). should_stop l'y coupe.

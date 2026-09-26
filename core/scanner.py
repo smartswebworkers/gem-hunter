@@ -37,6 +37,7 @@ from core.risk_management import compute_risk_plan
 from core.telegram_alerts import send_alert
 from core import performance_tracker, self_tuning, self_upgrade
 from core.i18n import t
+from core.autotrader import AutoTrader
 from data_sources import dexscreener, nansen, goplus, solana_rpc
 from storage import db
 import config as cfg
@@ -167,6 +168,8 @@ class Scanner:
         # _process_candidate n'est pas atomique, et les deux threads peuvent
         # tomber sur le même token. Sans ce verrou : deux alertes identiques.
         self._publish_lock = threading.RLock()
+        # AUTO BUY (simulation) : voir core/autotrader.py
+        self.autotrader = AutoTrader()
 
     # --- Contrôles exposés à l'interface ---
     def _is_stopping(self) -> bool:
@@ -222,8 +225,29 @@ class Scanner:
         self._stop_event.set()
         logger.info("Scanner arrêté (STOP).")
 
-    def set_auto_buy(self, enabled: bool):
+    def set_auto_buy(self, enabled: bool) -> str:
+        """Bouton AUTO BUY. Renvoie le mode (« simulation »), affiché à côté du bouton."""
         self.state.auto_buy = enabled
+        return self.autotrader.set_enabled(enabled)
+
+    def set_auto_buy_amount(self, usd) -> float:
+        """Capital par achat choisi à la main (borné à 1 $ minimum). Renvoie la valeur retenue."""
+        return self.autotrader.set_amount_usd(usd)
+
+    def _autobuy_hook(self, chain: str, candidate: dict, tier: str):
+        """
+        Appelé APRÈS l'émission d'une alerte : le token a donc passé tous les vetos et
+        la porte d'importance. L'achat lui-même se fait sur un thread dédié, pour ne
+        jamais ralentir le scan.
+        """
+        if not self.state.auto_buy or self.state.paused:
+            return
+        try:
+            reason = self.autotrader.consider(chain, candidate, tier)
+            if reason not in ("queued", "off", "chain", "not_fresh"):
+                logger.info(f"AUTO BUY : {candidate.get('ticker', '?')} non acheté ({reason}).")
+        except Exception:
+            logger.exception("Erreur dans le hook AUTO BUY.")
 
     def set_telegram(self, enabled: bool):
         self.state.telegram_enabled = enabled
@@ -871,11 +895,8 @@ class Scanner:
             for err in send_alert(signal):
                 logger.warning(err)
 
-        if self.state.auto_buy and not self.state.paused and not self._is_stopping():
-            logger.info(
-                f"AUTO BUY activé mais exécution d'ordre non implémentée par sécurité — "
-                f"signal {ticker} journalisé pour confirmation manuelle."
-            )
+        if not self._is_stopping():
+            self._autobuy_hook(chain, candidate, cfg.TIER_SIGNAL)
 
     def _handle_watch(self, chain: str, candidate: dict, scored: dict, stats: dict):
         """
@@ -966,6 +987,9 @@ class Scanner:
         if self.state.telegram_enabled and not self.state.paused and not self._is_stopping():
             for err in send_alert(watch_entry):
                 logger.warning(err)
+
+        if not self._is_stopping():
+            self._autobuy_hook(chain, candidate, cfg.TIER_WATCH)
 
     @staticmethod
     def _risk_level(score: float) -> str:

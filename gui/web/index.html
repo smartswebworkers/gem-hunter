@@ -102,6 +102,10 @@ select, .cmd-btn{
   cursor:pointer; transition: all 0.15s ease;
 }
 select:hover, .cmd-btn:hover{ border-color: var(--cyan); }
+#autoBuyAmount{ width:64px; background:#0f1822; border:1px solid var(--panel-border); color:var(--text);
+  border-radius:6px; padding:7px 8px; font-family:'Inter',sans-serif; font-size:13px; }
+#autoBuyAmount:focus{ outline:none; border-color:var(--cyan); }
+.autobuy-amount{ display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); letter-spacing:1px; }
 .cmd-btn.active{ background: rgba(45,212,191,0.12); border-color:var(--cyan); color:var(--cyan); }
 .cmd-btn.danger{ border-color: rgba(244,83,107,0.5); color:var(--danger); }
 .cmd-btn.danger:hover{ background: rgba(244,83,107,0.12); }
@@ -280,6 +284,10 @@ input[type=range]::-webkit-slider-thumb{
       <button class="cmd-btn" id="btnPause">⏸ <span data-i18n="btn.pause">PAUSE</span></button>
       <button class="cmd-btn danger" id="btnStop">⏹ <span data-i18n="btn.stop">STOP</span></button>
       <button class="cmd-btn" id="btnAutoBuy">AUTO BUY: OFF</button>
+      <span class="autobuy-amount" id="autoBuyAmountWrap" data-i18n-title="autobuy.tooltip" title="">
+        <input type="number" id="autoBuyAmount" min="1" max="100" step="0.5" value="1" autocomplete="off">
+        <label for="autoBuyAmount" data-i18n="autobuy.perTrade">$ / achat</label>
+      </span>
       <button class="cmd-btn active" id="btnTelegram">TELEGRAM: ON</button>
       <button class="cmd-btn active" id="btnNansen">SMART MONEY: ON</button>
       <button class="cmd-btn active" id="btnWatch">VEILLE: ON</button>
@@ -449,6 +457,13 @@ const I18N = {
     zh: "当前权重来自 config.py。自动校正（根据实际结果调整）每 20 个扫描周期执行一次。",
   },
   "panel.log": { fr: "JOURNAL", en: "LOG", zh: "日志" },
+  "autobuy.perTrade": { fr: "$ / ACHAT", en: "$ / BUY", zh: "美元/笔" },
+  "autobuy.sim": { fr: "SIMULATION", en: "SIMULATION", zh: "模拟" },
+  "autobuy.tooltip": {
+    fr: "Capital engagé par achat (minimum 1 $). Achat dès l'alerte, revente automatique à x2. SIMULATION : aucune transaction réelle.",
+    en: "Capital per buy (minimum $1). Buys on alert, sells automatically at x2. SIMULATION: no real transaction.",
+    zh: "每笔买入的资金（最低 1 美元）。提醒时买入，涨到 2 倍自动卖出。模拟：不会产生真实交易。",
+  },
   "state.on": { fr: "ON", en: "ON", zh: "开" },
   "state.off": { fr: "OFF", en: "OFF", zh: "关" },
   "badge.watch": { fr: "VEILLE", en: "WATCH", zh: "观察" },
@@ -565,6 +580,7 @@ function applyI18n(){
     el.textContent = t(el.dataset.i18n);
   });
   document.getElementById("btnProfile").title = t("profile.tooltip");
+  document.querySelectorAll("[data-i18n-title]").forEach(el => { el.title = t(el.dataset.i18nTitle); });
   refreshToggleLabels();
   if(lastWeights) loadWeights(lastWeights);
 }
@@ -573,7 +589,7 @@ function applyI18n(){
 // courante, sans changer leur état — appelé après un clic ET après un
 // changement de langue.
 function refreshToggleLabels(){
-  document.getElementById("btnAutoBuy").textContent = t("btn.autobuy") + ": " + (autoBuy ? t("state.on") : t("state.off"));
+  document.getElementById("btnAutoBuy").textContent = t("btn.autobuy") + ": " + (autoBuy ? t("state.on") + " (" + t("autobuy.sim") + ")" : t("state.off"));
   document.getElementById("btnTelegram").textContent = t("btn.telegram") + ": " + (telegramOn ? t("state.on") : t("state.off"));
   document.getElementById("btnNansen").textContent = t("btn.smartmoney") + ": " + (nansenOn ? t("state.on") : t("state.off"));
   document.getElementById("btnWatch").textContent = t("btn.watch") + ": " + (watchOn ? t("state.on") : t("state.off"));
@@ -1098,7 +1114,23 @@ document.getElementById("btnAutoBuy").addEventListener("click", (e) => {
   autoBuy = !autoBuy;
   refreshToggleLabels();
   e.currentTarget.classList.toggle("active", autoBuy);
-  if(bridge) bridge.setAutoBuy(autoBuy);
+  if(bridge) bridge.setAutoBuy(autoBuy, function(){ refreshToggleLabels(); });
+});
+
+// Capital par achat, choisi à la main (minimum 1 $). Comme pour le curseur SCORE MIN,
+// on n'envoie au backend QUE ce que l'utilisateur a réellement saisi : Chromium peut
+// restaurer silencieusement une ancienne valeur de champ au chargement.
+let userTouchedAmount = false;
+const autoBuyAmountEl = document.getElementById("autoBuyAmount");
+["pointerdown", "keydown", "wheel"].forEach(evt => {
+  autoBuyAmountEl.addEventListener(evt, () => { userTouchedAmount = true; });
+});
+autoBuyAmountEl.addEventListener("change", (e) => {
+  if(!userTouchedAmount) return;
+  let v = parseFloat(e.target.value);
+  if(!isFinite(v) || v < 1) v = 1;           // plancher 1 $ (le backend le garantit aussi)
+  e.target.value = v;
+  if(bridge) bridge.setAutoBuyAmount(v, function(effective){ e.target.value = effective; });
 });
 
 let telegramOn = true;
@@ -1187,6 +1219,15 @@ new QWebChannel(qt.webChannelTransport, function(channel){
   });
 
   // Reflète les chaînes réellement actives côté scanner (state.active_chains).
+  // Reflète le capital par achat mémorisé et l'état de l'AUTO BUY côté backend.
+  bridge.getAutoBuyStatus(function(jsonStr){
+    let st; try { st = JSON.parse(jsonStr); } catch(e){ return; }
+    autoBuyAmountEl.value = st.amount_usd;
+    autoBuy = !!st.enabled;
+    document.getElementById("btnAutoBuy").classList.toggle("active", autoBuy);
+    refreshToggleLabels();
+  });
+
   bridge.getActiveChains(function(jsonStr){
     let list;
     try { list = JSON.parse(jsonStr); } catch(e){ return; }
