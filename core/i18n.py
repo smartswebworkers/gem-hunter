@@ -332,6 +332,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The bonding curve state is not readable yet.",
         "zh": "绑定曲线状态暂时无法读取。",
     },
+    "veto.activity_unknown": {
+        "fr": "Activité du marché inconnue (achats/volume absents) — importance non démontrée.",
+        "en": "Market activity unknown (buys/volume missing) — importance not demonstrated.",
+        "zh": "市场活跃度未知（缺少买入/成交量数据）——重要性未获证实。",
+    },
+    "veto.no_activity": {
+        "fr": "Activité trop faible ({buys} achats < {min_buys}, volume {volume} $ < {min_volume} $) — pool sans traction.",
+        "en": "Activity too low ({buys} buys < {min_buys}, volume ${volume} < ${min_volume}) — pool without traction.",
+        "zh": "活跃度过低（买入 {buys} < {min_buys}，成交量 ${volume} < ${min_volume}）——该池没有热度。",
+    },
+    "veto.sell_pressure": {
+        "fr": "Pression vendeuse ({buys} achats / {sells} ventes, {ratio} % d'achats < {min} %) — distribution en cours.",
+        "en": "Sell pressure ({buys} buys / {sells} sells, {ratio}% buys < {min}%) — distribution under way.",
+        "zh": "卖压（买入 {buys} / 卖出 {sells}，买入占比 {ratio}% < {min}%）——正在出货。",
+    },
+    "veto.serial_launcher": {
+        "fr": "Ticker « {ticker} » déjà lancé sur {count} contrats en {minutes} min — usine à clones, bloqué.",
+        "en": "Ticker \"{ticker}\" already launched on {count} contracts in {minutes} min — clone factory, blocked.",
+        "zh": "代币符号“{ticker}”在 {minutes} 分钟内已在 {count} 个合约上发行——克隆工厂，已拦截。",
+    },
     "veto.no_traction": {
         "fr": "Pas assez d'achats réels ({value} SOL < {min} SOL) — lancement sans traction.",
         "en": "Not enough real buying ({value} SOL < {min} SOL) — launch without traction.",

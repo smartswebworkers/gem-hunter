@@ -343,9 +343,9 @@ def early_traction_verdict(candidate: dict) -> tuple[str, str | None]:
     ou curve pas encore lisible, ou ("reject", motif) : signature de scam avérée.
     Ne s'applique qu'aux candidats PumpPortal encore en bonding curve.
     """
-    if not getattr(cfg, "EARLY_TRACTION_GATE", False):
-        return "ok", None
     if candidate.get("source") != "pumpportal" or not candidate.get("is_pump_bonding_curve"):
+        return _market_activity_verdict(candidate)
+    if not getattr(cfg, "EARLY_TRACTION_GATE", False):
         return "ok", None
 
     real_sol = candidate.get("curve_real_sol")
@@ -365,6 +365,40 @@ def early_traction_verdict(candidate: dict) -> tuple[str, str | None]:
     if organic < cfg.EARLY_MIN_ORGANIC_SOL:
         return "wait", t("veto.no_traction", value=f"{max(organic, 0):.2f}",
                          min=f"{cfg.EARLY_MIN_ORGANIC_SOL:.1f}")
+    return "ok", None
+
+
+def _market_activity_verdict(candidate: dict) -> tuple[str, str | None]:
+    """
+    Porte d'importance des pools de marché (hors bonding curve pump.fun) : un token
+    récent doit montrer une activité RÉELLE (achats, volume, pression acheteuse).
+    Hors fenêtre « early », les planchers habituels de _market_vetoes s'appliquent
+    déjà : cette porte ne couvre que le trou laissé par l'absence de plancher de
+    volume dans la fenêtre early. Renvoie ("ok", None) ou ("wait", motif) : l'activité
+    peut venir, le token est ré-évalué aux passages suivants (aucun appel réseau).
+    """
+    if not getattr(cfg, "EARLY_ACTIVITY_GATE", False):
+        return "ok", None
+    if candidate.get("is_pump_bonding_curve") or not is_early_candidate(candidate):
+        return "ok", None
+
+    buys = candidate.get("buys_h1")
+    sells = candidate.get("sells_h1")
+    volume = candidate.get("volume_1h")
+    if volume is None:
+        volume = candidate.get("volume_24h")   # token < 1 h : le 24 h EST le 1 h
+    if buys is None or volume is None:
+        return "wait", t("veto.activity_unknown")
+
+    if buys < cfg.EARLY_MIN_BUYS_H1 or volume < cfg.EARLY_MIN_VOLUME_H1_USD:
+        return "wait", t("veto.no_activity", buys=str(buys), min_buys=str(cfg.EARLY_MIN_BUYS_H1),
+                         volume=f"{volume:,.0f}", min_volume=f"{cfg.EARLY_MIN_VOLUME_H1_USD:,.0f}")
+
+    total = buys + (sells or 0)
+    ratio = buys / total if total else 0.0
+    if ratio < cfg.EARLY_MIN_BUY_RATIO:
+        return "wait", t("veto.sell_pressure", buys=str(buys), sells=str(sells or 0),
+                         ratio=f"{ratio * 100:.0f}", min=f"{cfg.EARLY_MIN_BUY_RATIO * 100:.0f}")
     return "ok", None
 
 

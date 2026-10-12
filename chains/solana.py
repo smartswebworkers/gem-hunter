@@ -120,7 +120,11 @@ def annotate_traction(candidates: list[dict]) -> None:
         if st is not None:
             c["curve_real_sol"] = st["real_sol"]
             c["curve_complete"] = st["complete"]
-            c["organic_sol"] = st["real_sol"] - (c.get("dev_buy_sol") or 0.0)
+            # Une curve complétée a été vidée vers le pool de migration : real_sol y vaut
+            # ~0, et "real_sol - dev" afficherait un « -85 SOL » absurde. La traction d'un
+            # token migré est un fait (il a rempli la curve), pas une mesure en SOL.
+            c["organic_sol"] = (None if st["complete"]
+                                else st["real_sol"] - (c.get("dev_buy_sol") or 0.0))
 
 
 def _from_dexscreener() -> list[dict]:

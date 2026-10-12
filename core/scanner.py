@@ -168,6 +168,9 @@ class Scanner:
         # _process_candidate n'est pas atomique, et les deux threads peuvent
         # tomber sur le même token. Sans ce verrou : deux alertes identiques.
         self._publish_lock = threading.RLock()
+        # Lanceurs en série : (chaîne, ticker) -> {contrat: premier passage}. Voir
+        # _is_serial_launcher().
+        self._ticker_seen: dict[tuple[str, str], dict[str, float]] = {}
         # AUTO BUY (simulation) : voir core/autotrader.py
         self.autotrader = AutoTrader()
 
@@ -331,11 +334,15 @@ class Scanner:
         dessous ne s'affiche ni ne part en alerte, VEILLE comprise. Une marge
         non nulle autorise la VEILLE à descendre sous le curseur, jamais sous
         cfg.MIN_SCORE_TO_WATCH.
+
+        Dans tous les cas, jamais sous cfg.WATCH_MIN_SCORE_FLOOR : une alerte non
+        vérifiée à 39/100 n'est pas une alerte importante, même si le curseur est
+        descendu à 30 (c'est un plancher en plus, il ne relâche rien).
         """
         margin = max(0, getattr(cfg, "WATCH_SCORE_MARGIN", 0))
-        if margin == 0:
-            return self.state.min_score
-        return max(cfg.MIN_SCORE_TO_WATCH, self.state.min_score - margin)
+        base = (self.state.min_score if margin == 0
+                else max(cfg.MIN_SCORE_TO_WATCH, self.state.min_score - margin))
+        return max(base, getattr(cfg, "WATCH_MIN_SCORE_FLOOR", 0))
 
     def set_multichain(self, enabled: bool):
         self.state.active_chains = set(cfg.ACTIVE_CHAINS) if enabled else {"solana"}
@@ -412,6 +419,38 @@ class Scanner:
             self._rejected[self._rejection_key(chain, contract)] = now + ttl   # instant d'expiration
             if len(self._rejected) > 5000:   # borne mémoire sur une longue session
                 self._rejected = {k: v for k, v in self._rejected.items() if v > now}
+
+    def _is_serial_launcher(self, chain: str, candidate: dict) -> str | None:
+        """
+        Motif de blocage si ce ticker vient d'être lancé sur au moins
+        cfg.SERIAL_TICKER_MAX contrats DISTINCTS de la même chaîne dans la fenêtre :
+        c'est la signature d'une usine à clones (même déployeur, volume simulé). Les
+        pools PumpPortal sont exclues : les copies d'un mème y sont courantes et la
+        porte de traction les juge déjà. Compté à CHAQUE découverte, avant les autres
+        portes, pour que les clones morts comptent aussi.
+        """
+        limit = getattr(cfg, "SERIAL_TICKER_MAX", 0)
+        if limit <= 0 or candidate.get("source") == "pumpportal":
+            return None
+        ticker = str(candidate.get("ticker") or "").strip().lower()
+        contract = candidate.get("contract")
+        if len(ticker) < 2 or not contract:
+            return None
+        window = cfg.SERIAL_TICKER_WINDOW_SECONDS
+        now = time.time()
+        key = (chain, ticker)
+        with self._rejected_lock:
+            seen = {c: ts for c, ts in self._ticker_seen.get(key, {}).items() if now - ts <= window}
+            seen.setdefault(contract, now)
+            self._ticker_seen[key] = seen
+            if len(self._ticker_seen) > 5000:
+                self._ticker_seen = {k: v for k, v in self._ticker_seen.items()
+                                     if any(now - ts <= window for ts in v.values())}
+            count = len(seen)
+        if count >= limit:
+            return t("veto.serial_launcher", ticker=candidate.get("ticker") or ticker,
+                     count=str(count), minutes=str(int(window // 60)))
+        return None
 
     def _is_recently_rejected(self, chain: str, contract: str | None) -> bool:
         if not contract or getattr(cfg, "REJECTED_RECHECK_SECONDS", 0) <= 0:
@@ -685,8 +724,16 @@ class Scanner:
                 stats["skipped_rejected"] += 1
                 continue
 
-            # Porte d'IMPORTANCE (créations pump.fun) : pas de traction réelle = pas
-            # de vérification réseau, pas d'alerte. Le token est ré-évalué aux
+            # Usine à clones : même ticker lancé sur plusieurs contrats d'affilée.
+            serial = self._is_serial_launcher(chain, candidate)
+            if serial:
+                stats["prefiltered"] += 1
+                logger.debug(f"[{chain}] {candidate.get('ticker', '?')} écarté — {serial}")
+                continue
+
+            # Porte d'IMPORTANCE (pump.fun : traction on-chain ; autres chaînes : achats,
+            # volume, pression acheteuse) : pas d'activité réelle = pas de vérification
+            # réseau, pas d'alerte. Le token est ré-évalué aux
             # passages suivants et passe dès qu'il attire de vrais acheteurs.
             verdict, why = early_traction_verdict(candidate)
             if verdict == "wait":

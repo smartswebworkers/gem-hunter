@@ -159,7 +159,26 @@ EARLY_MIN_ORGANIC_SOL = 5.0        # ~750 $ d'acheteurs réels ; 0 = pas de plan
                                    # en test réel étaient à 3,3-3,5 SOL).
 EARLY_DEV_EXIT_MIN_DEV_SOL = 0.3   # sortie du créateur : ne se juge que si son achat est significatif
 EARLY_DEV_EXIT_RATIO = 0.85        # curve < 85 % de l'achat du créateur => il a retiré sa mise
-EARLY_MIN_HOLDER_ACCOUNTS = 5      # porteurs individuels minimum (dev compris) : sinon wash/bundle
+EARLY_MIN_HOLDER_ACCOUNTS = 8      # porteurs individuels minimum (dev compris) : sinon wash/bundle
+                                   # (5 laissait passer 7,9 SOL venus de 6 wallets seulement)
+
+# --- Porte d'IMPORTANCE des marchés réels (BSC / Base / Robinhood / Arc / Solana hors
+# pump.fun) ------------------------------------------------------------------------
+# Mesuré en direct (60 nouvelles pools EVM) : 46 alertes sur 54 en 10 min venaient de
+# ces chaînes, presque toutes des pools à ~3 200 $ de capitalisation avec UN seul
+# échange (la création elle-même), zéro volume, souvent lancées en série par le même
+# déployeur (« NULLxxx », « GWH » x6, « FORGE » x6). La fenêtre « early » supprime le
+# plancher de volume (un token neuf n'a pas encore de volume) : sans cette porte, un
+# pool mort passait donc en VEILLE. On exige ici une activité RÉELLE, mesurée.
+# N'AJOUTE que des filtres : aucun veto de sécurité n'est touché ni relâché.
+EARLY_ACTIVITY_GATE = True
+EARLY_MIN_BUYS_H1 = 30             # achats minimum sur la 1re heure
+EARLY_MIN_VOLUME_H1_USD = 8_000    # volume minimum sur la 1re heure
+EARLY_MIN_BUY_RATIO = 0.45         # achats / (achats + ventes) : en dessous, on distribue
+SERIAL_TICKER_MAX = 3              # contrats DISTINCTS portant le même ticker, sur une même
+SERIAL_TICKER_WINDOW_SECONDS = 3600   # chaîne en 1 h => usine à clones (wash trading), bloqués
+WATCH_MIN_SCORE_FLOOR = 50         # une alerte VEILLE (non vérifiée) ne descend JAMAIS sous
+                                   # ce score, même si le curseur est plus bas (≥ 39 = bruit)
 
 # =============================================================================
 # CRITÈRES DE MARCHÉ

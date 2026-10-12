@@ -2079,3 +2079,40 @@ token non éprouvé) ; aucun stop-loss n'est demandé, donc un token qui ne fait
 en portefeuille ; en réel, glissement et frais de priorité pèsent lourd sur une mise de 1 $.
 
 350 tests, 0 échec (316 -> 350).
+
+
+## Mise à jour 41 — Uniquement les alertes importantes (filtre dès la première seconde)
+
+**Demande** : « trop d'alertes inutiles, filtrer les tokens à fort potentiel dès la première seconde,
+uniquement les alertes importantes ».
+
+**Mesure avant (10 min de flux réel, curseur au plancher 30)** : 54 alertes, dont **46 sur BSC / Base /
+Robinhood / Arc** (GeckoTerminal). Seul pump.fun avait une porte d'importance. Ces pools étaient presque
+tous à ~3 200 $ de capitalisation avec UN seul échange (la création) et zéro volume, souvent lancés en série
+par le même déployeur (« NULLxxx » x7, « GWH » x6, « FORGE » x6, noms « RUG », « SHITTER »...). Cause : la
+fenêtre « early » supprime le plancher de volume (un token neuf n'a pas encore de volume), donc un pool mort
+passait en VEILLE avec un score de ~39.
+
+**Ajouts (uniquement des filtres, aucun veto de sécurité relâché)**
+- **Porte d'activité réelle (hors pump.fun)** : un token récent doit montrer >= 30 achats, >= 8 000 $ de
+  volume sur 1 h et >= 45 % d'achats (pas de distribution). Activité inconnue = importance non démontrée.
+  Sans appel réseau ; le token est ré-évalué aux cycles suivants. `EARLY_ACTIVITY_GATE`, `EARLY_MIN_*`.
+- **Usines à clones** : un même ticker lancé sur >= 3 contrats distincts d'une chaîne en 1 h est bloqué
+  (`SERIAL_TICKER_MAX`). Les clones morts comptent aussi. PumpPortal exclu.
+- **Plancher VEILLE à 50/100** (`WATCH_MIN_SCORE_FLOOR`) : une alerte non vérifiée ne descend jamais sous
+  50, même si le curseur est à 30. Ne baisse jamais un seuil choisi plus haut.
+- **pump.fun** : porteurs individuels minimum relevé de 5 à 8 (7,9 SOL venus de 6 wallets = bundle
+  probable). Bug corrigé : un token déjà migré affichait « Traction réelle : -85 SOL » (la curve est vidée à
+  la migration) ; l'indicateur est maintenant absent dans ce cas.
+
+**Mesure après (même protocole)** : **2 alertes**, toutes deux pump.fun (traction réelle, 14 et 19
+porteurs). 54 -> 2.
+
+**Limites à connaître**
+- Sur BSC/Base/Robinhood, GeckoTerminal n'indexe une pool qu'environ 10 min après sa création : ces chaînes ne
+  peuvent pas donner de signal « première seconde » avec cette source. Pour cela il faudrait écouter les
+  événements de la factory (ex. four.meme) directement sur la chaîne : chantier à part.
+- Ces filtres réduisent le bruit, ils ne prouvent pas qu'un token va monter. Une alerte VEILLE reste « pas un
+  signal d'achat ».
+
+398 tests, 0 échec (350 -> 398).

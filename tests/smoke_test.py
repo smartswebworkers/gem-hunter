@@ -1387,10 +1387,11 @@ etat.running = True            # ces tests unitaires ne passent pas par run()
 etat.telegram_enabled = False  # aucun appel réseau Telegram pendant les tests
 scanner_test = Scanner(etat)
 
-for cursor in (80, 90, 72, 65):
+for cursor in (80, 90, 72, 65, 30, 40):
     scanner_test.set_min_score(cursor)
     expected = cursor if config.WATCH_SCORE_MARGIN == 0 else max(
         config.MIN_SCORE_TO_WATCH, cursor - config.WATCH_SCORE_MARGIN)
+    expected = max(expected, config.WATCH_MIN_SCORE_FLOOR)   # plancher d'importance
     check(scanner_test.watch_threshold() == expected,
           f"Curseur à {cursor/100:.2f} => seuil de veille {expected}/100 "
           f"(marge {config.WATCH_SCORE_MARGIN})",
@@ -1421,7 +1422,7 @@ fm_watch = {
     "chain": "solana", "contract": "FMWATCH1", "ticker": "FM1", "name": "FirstMin",
     "is_pump_bonding_curve": True,
     "pair_created_at": time.time() * 1000,   # capté à l'instant -> < 3 min
-    "tier": config.TIER_WATCH, "verified": False, "score": 32.0,
+    "tier": config.TIER_WATCH, "verified": False, "score": 55.0,
     "missing_checks": ["bonding curve"], "reasons": [], "features": {},
 }
 check(is_first_minute_candidate(fm_watch) is True,
@@ -1431,7 +1432,7 @@ stats_fm = {"below": 0, "watch": 0}
 scanner_test.set_min_score(80)
 scanner_test._handle_watch("solana", fm_watch, fm_watch, stats_fm)
 check(stats_fm["below"] == 1 and stats_fm["watch"] == 0,
-      "Curseur à 0.80 : une VEILLE 1re minute à 0.32 est masquée comme les autres",
+      "Curseur à 0.80 : une VEILLE 1re minute à 0.55 est masquée comme les autres",
       f"-> below={stats_fm['below']}, watch={stats_fm['watch']}")
 
 # Curseur abaissé à 0.30 (nouveau plancher) : la même VEILLE devient visible.
@@ -1442,7 +1443,7 @@ check(scanner_test.state.min_score == 30 and config.MIN_SCORE_RANGE[0] == 30,
 scanner_test._handle_watch("solana", dict(fm_watch, contract="FMWATCH1B"),
                            fm_watch, stats_fm2)
 check(stats_fm2["watch"] == 1 and stats_fm2["below"] == 0,
-      "Curseur à 0.30 : la VEILLE 1re minute à 0.32 s'affiche")
+      "Curseur à 0.30 : la VEILLE 1re minute à 0.55 (>= plancher d'importance) s'affiche")
 
 # Une VEILLE à 0.28 reste sous le plancher, même 1re minute.
 stats_fm3 = {"below": 0, "watch": 0}
@@ -1490,7 +1491,7 @@ sc_fm.set_min_score(30)   # curseur au plancher pour que la VEILLE à 0.35 passe
 cand_fm = {
     "chain": "solana", "contract": "FMFLAG1", "ticker": "FMF", "name": "FirstMinFlag",
     "is_pump_bonding_curve": True, "pair_created_at": time.time() * 1000,
-    "tier": config.TIER_WATCH, "verified": False, "score": 35.0,
+    "tier": config.TIER_WATCH, "verified": False, "score": 55.0,
     "missing_checks": ["bonding curve"], "reasons": [], "features": {},
 }
 sc_fm._handle_watch("solana", cand_fm, cand_fm, {"below": 0, "watch": 0})
@@ -2110,6 +2111,161 @@ _sc_ab._autobuy_hook("solana", {"contract": "PAUSED"}, config.TIER_WATCH)
 check(len(_sc_ab.autotrader.calls) == 1, "Scanner : en PAUSE, aucun achat automatique")
 check(_sc_ab.set_auto_buy(True) == "simulation" and _sc_ab.set_auto_buy_amount(4) == 4.0,
       "Scanner : le bouton et le réglage du capital sont relayés à l'auto trader")
+
+# --- 12e-septies. Porte d'importance des marchés réels + lanceurs en série + plancher VEILLE ---
+from core.security_checks import early_traction_verdict as _etv, _market_activity_verdict as _mav
+from core import i18n as _i18n_a
+
+_now_ms = time.time() * 1000
+
+
+def _evm(buys, sells, vol, age_min=15, **kw):
+    return {"chain": "bsc", "contract": "0xEVM", "ticker": "TKN", "source": "geckoterminal",
+            "is_pump_bonding_curve": False, "buys_h1": buys, "sells_h1": sells,
+            "volume_1h": vol, "pair_created_at": _now_ms - age_min * 60_000, **kw}
+
+
+# Le pool « mort » mesuré en direct : 1 échange (la création), 0 volume.
+check(_etv(_evm(1, 0, 0))[0] == "wait",
+      "Importance (EVM) : un pool à 1 échange et 0 volume n'est PAS alerté")
+check(_etv(_evm(29, 5, 20_000))[0] == "wait",
+      "Importance (EVM) : 29 achats < 30 => pas d'alerte")
+check(_etv(_evm(60, 5, 7_999))[0] == "wait",
+      "Importance (EVM) : volume 7 999 $ < 8 000 $ => pas d'alerte")
+check(_etv(_evm(30, 5, 8_000))[0] == "ok",
+      "Importance (EVM) : 30 achats et 8 000 $ de volume => admis (bornes incluses)")
+check(_etv(_evm(40, 80, 30_000))[0] == "wait" and "Pression vendeuse" in (_etv(_evm(40, 80, 30_000))[1] or ""),
+      "Importance (EVM) : 33 % d'achats seulement = distribution => pas d'alerte")
+check(_etv(_evm(50, 50, 30_000))[0] == "ok",
+      "Importance (EVM) : 50 % d'achats => admis")
+check(_etv(_evm(None, None, None))[0] == "wait",
+      "Importance (EVM) : activité inconnue ne vaut PAS preuve d'importance")
+_v24 = _evm(60, 10, None); _v24["volume_24h"] = 20_000
+check(_etv(_v24)[0] == "ok", "Importance (EVM) : volume 1 h absent => repli sur le volume 24 h (token < 1 h)")
+check(_etv(_evm(1, 0, 0, age_min=60 * 24))[0] == "ok",
+      "Hors fenêtre early, la porte n'intervient pas (les planchers habituels s'appliquent)")
+check(_etv({**_evm(1, 0, 0), "pair_created_at": None})[0] == "ok",
+      "Sans âge connu, la porte early ne s'applique pas (pas de faux blocage)")
+_cfg_save = config.EARLY_ACTIVITY_GATE
+config.EARLY_ACTIVITY_GATE = False
+check(_etv(_evm(1, 0, 0))[0] == "ok", "EARLY_ACTIVITY_GATE = False désactive la porte")
+config.EARLY_ACTIVITY_GATE = _cfg_save
+check(_etv({"source": "pumpportal", "is_pump_bonding_curve": True, "curve_real_sol": 9.0,
+            "dev_buy_sol": 0.5, "buys_h1": 0, "volume_1h": 0})[0] == "ok",
+      "Les créations pump.fun restent jugées par la traction on-chain, pas par buys/volume")
+for _l in ("fr", "en", "zh"):
+    for _k in ("veto.no_activity", "veto.sell_pressure", "veto.activity_unknown", "veto.serial_launcher"):
+        _prm = dict(buys="1", min_buys="30", volume="0", min_volume="8,000",
+                    sells="2", ratio="10", min="45", ticker="X", count="3", minutes="60")
+        _txt = _i18n_a.t(_k, lang=_l, **_prm)
+        check(bool(_txt) and "{" not in _txt and _txt != _k, f"i18n {_k} ({_l}) rendu sans accolade résiduelle")
+    _fr_txt = _i18n_a.t("veto.no_activity", lang="fr", buys="1", min_buys="30", volume="0", min_volume="8,000")
+    check(_i18n_a.translate(_fr_txt, "en") == _i18n_a.t("veto.no_activity", lang="en", buys="1", min_buys="30",
+                                                          volume="0", min_volume="8,000"),
+          "i18n veto.no_activity : le texte français rendu se retraduit en anglais (dashboard)")
+
+# --- Lanceurs en série ------------------------------------------------------------------
+_sc_ser = Scanner(ScannerState())
+
+
+def _tk(contract, ticker="GWH", chain="bsc", source="geckoterminal"):
+    return {"chain": chain, "contract": contract, "ticker": ticker, "source": source}
+
+
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xA")) is None, "Lanceur en série : 1er contrat du ticker admis")
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xA")) is None,
+      "Lanceur en série : le MÊME contrat revu n'est pas compté deux fois")
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xB")) is None, "Lanceur en série : 2e contrat admis")
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xC")) is not None,
+      "Lanceur en série : 3e contrat du même ticker bloqué (usine à clones)")
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xA")) is not None,
+      "Lanceur en série : le 1er contrat est lui aussi bloqué rétroactivement (pas encore alerté)")
+check(_sc_ser._is_serial_launcher("base", _tk("0xD", chain="base")) is None,
+      "Lanceur en série : le compteur est PAR chaîne")
+check(_sc_ser._is_serial_launcher("bsc", _tk("0xE", ticker="gwh")) is not None,
+      "Lanceur en série : insensible à la casse du ticker")
+check(_sc_ser._is_serial_launcher("solana", _tk("S1", ticker="PEPE", chain="solana", source="pumpportal")) is None
+      and _sc_ser._is_serial_launcher("solana", _tk("S2", ticker="PEPE", chain="solana", source="pumpportal")) is None
+      and _sc_ser._is_serial_launcher("solana", _tk("S3", ticker="PEPE", chain="solana", source="pumpportal")) is None,
+      "Lanceur en série : PumpPortal exclu (copies de mème jugées par la traction)")
+check(_sc_ser._is_serial_launcher("bsc", {"chain": "bsc", "contract": "0xZ", "ticker": "A"}) is None,
+      "Lanceur en série : ticker d'un seul caractère ignoré (trop générique)")
+_ser_ts = time.time
+try:
+    _t0 = time.time()
+    time.time = lambda: _t0 + config.SERIAL_TICKER_WINDOW_SECONDS + 5
+    check(_sc_ser._is_serial_launcher("bsc", _tk("0xF")) is None,
+          "Lanceur en série : hors fenêtre, le compteur repart de zéro")
+finally:
+    time.time = _ser_ts
+
+# Intégration au cycle : un lot de clones morts n'est ni vérifié ni alerté.
+_sc_cy = Scanner(ScannerState())
+_sc_cy._stop_event.clear(); _sc_cy.state.running = True
+_sc_cy.state.telegram_enabled = False
+_sc_cy.set_min_score(30)
+_enrich_calls = []
+
+
+class _FakeEvmMod:
+    @staticmethod
+    def enrich_batch(cands, should_stop=None):
+        _enrich_calls.extend(c["contract"] for c in cands)
+        return cands
+
+
+_emitted_cy = []
+_sc_cy.state.on_new_signal = _emitted_cy.append
+_dead = [_evm(1, 0, 0, contract="0xDEAD%d" % i, ticker="NULL%d" % i, market_cap=3220, liquidity=2570)
+         for i in range(5)]
+_sc_cy._process_chain("bsc", _FakeEvmMod, _dead)
+check(not _enrich_calls and not _emitted_cy,
+      "Cycle : 5 pools mortes (1 échange, 0 volume) => aucune vérification réseau, aucune alerte",
+      f"-> enrich={_enrich_calls}, emis={len(_emitted_cy)}")
+_alive = _evm(120, 60, 50_000, contract="0xALIVE", ticker="ALIVE", market_cap=90_000, liquidity=40_000)
+_sc_cy._process_chain("bsc", _FakeEvmMod, [_alive])
+check(_enrich_calls == ["0xALIVE"],
+      "Cycle : un pool réellement actif (120 achats, 50 k$) EST envoyé à la vérification (la porte laisse passer)",
+      f"-> enrich={_enrich_calls}")
+
+# --- Plancher d'importance sur la VEILLE ----------------------------------------------------
+_sc_fl = Scanner(ScannerState())
+_sc_fl._stop_event.clear(); _sc_fl.state.running = True
+_sc_fl.set_min_score(30)
+check(_sc_fl.watch_threshold() == config.WATCH_MIN_SCORE_FLOOR,
+      "Curseur à 0.30 : le seuil VEILLE effectif est le plancher d'importance",
+      f"-> {_sc_fl.watch_threshold()}")
+_sc_fl.set_min_score(90)
+check(_sc_fl.watch_threshold() == 90, "Curseur à 0.90 : le plancher ne baisse jamais le seuil choisi")
+_sc_fl.set_min_score(30)
+_fl_em = []
+_sc_fl.state.on_new_signal = _fl_em.append
+_sc_fl.state.telegram_enabled = False
+_w39 = {"chain": "bsc", "contract": "0xW39", "ticker": "W39", "tier": config.TIER_WATCH, "verified": False,
+        "score": 39.4, "missing_checks": [], "reasons": [], "features": {}}
+_st_fl = {"below": 0, "watch": 0, "filtered_age": 0}
+_sc_fl._handle_watch("bsc", _w39, _w39, _st_fl)
+check(_st_fl["below"] == 1 and not _fl_em,
+      "VEILLE à 39/100 : masquée même curseur au plancher (bruit mesuré en direct)")
+_w55 = dict(_w39, contract="0xW55", ticker="W55", score=55.0)
+_st_fl2 = {"below": 0, "watch": 0, "filtered_age": 0}
+_sc_fl._handle_watch("bsc", _w55, _w55, _st_fl2)
+check(_st_fl2["watch"] == 1 and len(_fl_em) == 1, "VEILLE à 55/100 : affichée (au-dessus du plancher)")
+
+# --- Token pump.fun migré : plus de traction négative absurde ---------------------------------
+from chains import solana as _sol_chain
+from data_sources import solana_rpc as _rpc_a
+_rpc_probe_save = _rpc_a.probe_curves
+_rpc_a.probe_curves = lambda keys: {k: {"real_sol": 0.0, "complete": True, "vtok": 1.0, "vsol": 1.0} for k in keys}
+_mig = {"source": "pumpportal", "bonding_curve": "CURVE1", "dev_buy_sol": 85.0}
+_sol_chain.annotate_traction([_mig])
+_rpc_a.probe_curves = _rpc_probe_save
+check(_mig["curve_complete"] is True and _mig["organic_sol"] is None,
+      "Curve complétée : organic_sol vaut None (et non « -85 SOL »)")
+check(_etv({"source": "pumpportal", "is_pump_bonding_curve": True, **{k: _mig[k] for k in
+            ("curve_real_sol", "curve_complete", "dev_buy_sol")}})[0] == "ok",
+      "Token déjà migré : toujours admis par la porte de traction")
+check(config.EARLY_MIN_HOLDER_ACCOUNTS >= 8, "Porteurs individuels minimum relevé à 8 (6 wallets = bundle probable)")
 
 # --- 12f. STOP interrompt l'enrichissement en cours ----------------------
 # Le point de blocage réel : la boucle RPC unitaire de solana.enrich_batch
